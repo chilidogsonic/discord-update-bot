@@ -62,8 +62,8 @@ After inviting the bot to your server, run:
 /setup
 ```
 Then answer in chat:
-- Roles that can set downtime
-- Roles that can clear downtime
+- Roles that can set downtime (role names or IDs; no @ needed)
+- Roles that can clear downtime (role names or IDs; no @ needed)
 - Channel for the status panel
 
 ## Hosting Notes

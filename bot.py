@@ -229,6 +229,15 @@ async def prompt_user_message(
     return "value", content
 
 
+async def post_panel_message(guild: discord.Guild, channel: discord.abc.Messageable, guild_id: int) -> None:
+    embed = get_status_embed(guild_id, full=False)
+    message = await channel.send(embed=embed, view=StatusPanel())
+    panel_messages.append(
+        {"channel_id": message.channel.id, "message_id": message.id, "guild_id": guild_id}
+    )
+    save_data()
+
+
 def load_data() -> None:
     if not os.path.exists(DATA_FILE):
         return
@@ -604,71 +613,6 @@ class SetDowntimeModal(ui.Modal, title="Set Downtime"):
         )
 
 
-    async def on_submit(self, interaction: discord.Interaction):
-        if not interaction.guild or not interaction.guild_id:
-            await interaction.response.send_message(
-                "This command can only be used in a server.",
-                ephemeral=True,
-            )
-            return
-
-        set_roles, allow_set_all, unknown_set = parse_role_input(self.set_roles.value, interaction.guild)
-        clear_roles, allow_clear_all, unknown_clear = parse_role_input(
-            self.clear_roles.value, interaction.guild
-        )
-        channel_id = None
-        if self.panel_channel.value.strip():
-            channel_id, channel_error = parse_channel_id(self.panel_channel.value)
-            if channel_error:
-                await interaction.response.send_message(channel_error, ephemeral=True)
-                return
-            channel = interaction.guild.get_channel(channel_id)
-            if channel is None:
-                try:
-                    channel = await interaction.guild.fetch_channel(channel_id)
-                except Exception:
-                    channel = None
-            if channel is None:
-                await interaction.response.send_message(
-                    "Channel not found in this server.",
-                    ephemeral=True,
-                )
-                return
-
-        cfg = get_config(interaction.guild_id)
-        cfg["set_roles"] = set_roles
-        cfg["clear_roles"] = clear_roles
-        cfg["allow_set_all"] = allow_set_all
-        cfg["allow_clear_all"] = allow_clear_all
-        if channel_id is not None:
-            cfg["panel_channel_id"] = channel_id
-
-        save_data()
-
-        def role_list_display(role_ids: list[int], allow_all: bool) -> str:
-            if allow_all:
-                return "Everyone"
-            if not role_ids:
-                return "Manage Server"
-            return ", ".join(f"<@&{rid}>" for rid in role_ids)
-
-        summary = (
-            f"Setup saved.\n"
-            f"Set downtime: {role_list_display(set_roles, allow_set_all)}\n"
-            f"Clear downtime: {role_list_display(clear_roles, allow_clear_all)}\n"
-        )
-        if channel_id:
-            summary += f"Panel channel: <#{channel_id}>\n"
-        if unknown_set or unknown_clear:
-            summary += (
-                "Unrecognized roles: "
-                + ", ".join(sorted(set(unknown_set + unknown_clear)))
-                + "\n"
-            )
-        # No warnings if we get here
-
-        await interaction.response.send_message(summary.strip(), ephemeral=True)
-
 
 # ============ EVENTS ============
 @client.event
@@ -745,7 +689,7 @@ async def setup(interaction: discord.Interaction):
     while True:
         prompt = (
             f"Roles that can set downtime? Current: {format_role_list(cfg['set_roles'], cfg['allow_set_all'])}\n"
-            "Reply with role names or mentions separated by commas. Use `everyone`, `none`, or `skip`."
+            "Reply with role names (no @) or IDs separated by commas. Use `everyone`, `none`, or `skip`."
         )
         status, value = await prompt_user_message(channel, user, prompt)
         if status == "timeout":
@@ -772,7 +716,7 @@ async def setup(interaction: discord.Interaction):
     while True:
         prompt = (
             f"Roles that can clear downtime? Current: {format_role_list(cfg['clear_roles'], cfg['allow_clear_all'])}\n"
-            "Reply with role names or mentions separated by commas. Use `everyone`, `none`, or `skip`."
+            "Reply with role names (no @) or IDs separated by commas. Use `everyone`, `none`, or `skip`."
         )
         status, value = await prompt_user_message(channel, user, prompt)
         if status == "timeout":
@@ -831,12 +775,32 @@ async def setup(interaction: discord.Interaction):
 
     save_data()
 
+    panel_posted = False
+    panel_note = ""
+    panel_channel_id = cfg.get("panel_channel_id")
+    if isinstance(panel_channel_id, int):
+        panel_channel = guild.get_channel(panel_channel_id)
+        if panel_channel is None:
+            try:
+                panel_channel = await guild.fetch_channel(panel_channel_id)
+            except Exception:
+                panel_channel = None
+        if panel_channel is None:
+            panel_note = "Panel channel not found, so no panel was posted."
+        else:
+            await post_panel_message(guild, panel_channel, interaction.guild_id)
+            panel_posted = True
+
     summary = (
         f"Setup saved.\n"
         f"Set downtime: {format_role_list(cfg['set_roles'], cfg['allow_set_all'])}\n"
         f"Clear downtime: {format_role_list(cfg['clear_roles'], cfg['allow_clear_all'])}\n"
         f"Panel channel: {format_channel(cfg.get('panel_channel_id'))}"
     )
+    if panel_posted:
+        summary += "\nPanel posted."
+    if panel_note:
+        summary += f"\n{panel_note}"
     await channel.send(f"{user.mention} {summary}")
 
 
@@ -871,12 +835,7 @@ async def post_panel(interaction: discord.Interaction):
             )
             return
         target_channel = channel
-    embed = get_status_embed(interaction.guild_id, full=False)
-    message = await target_channel.send(embed=embed, view=StatusPanel())
-    panel_messages.append(
-        {"channel_id": message.channel.id, "message_id": message.id, "guild_id": interaction.guild_id}
-    )
-    save_data()
+    await post_panel_message(interaction.guild, target_channel, interaction.guild_id)
     await interaction.response.send_message("Panel posted.", ephemeral=True)
 
 
