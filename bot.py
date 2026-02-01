@@ -47,6 +47,47 @@ TIME_EMOJI = "\U0001F49E"    # revolving hearts
 FOOTER_TEXT = "Infinity Nikki - Status Panel"
 BUTTON_LABEL = "Check Status"
 
+
+COMMON_TIMEZONES = [
+    ("UTC", "UTC"),
+    ("Eastern (America/New_York)", "America/New_York"),
+    ("Central (America/Chicago)", "America/Chicago"),
+    ("Mountain (America/Denver)", "America/Denver"),
+    ("Pacific (America/Los_Angeles)", "America/Los_Angeles"),
+    ("UK (Europe/London)", "Europe/London"),
+    ("Central Europe (Europe/Paris)", "Europe/Paris"),
+    ("Tokyo (Asia/Tokyo)", "Asia/Tokyo"),
+    ("Sydney (Australia/Sydney)", "Australia/Sydney"),
+    ("Auckland (Pacific/Auckland)", "Pacific/Auckland"),
+    ("Sao Paulo (America/Sao_Paulo)", "America/Sao_Paulo"),
+    ("Mexico City (America/Mexico_City)", "America/Mexico_City"),
+    ("Phoenix (America/Phoenix)", "America/Phoenix"),
+    ("Anchorage (America/Anchorage)", "America/Anchorage"),
+    ("Honolulu (Pacific/Honolulu)", "Pacific/Honolulu"),
+    ("Mumbai (Asia/Kolkata)", "Asia/Kolkata"),
+    ("Seoul (Asia/Seoul)", "Asia/Seoul"),
+    ("Singapore (Asia/Singapore)", "Asia/Singapore"),
+    ("Dubai (Asia/Dubai)", "Asia/Dubai"),
+    ("Johannesburg (Africa/Johannesburg)", "Africa/Johannesburg"),
+    ("EST (fixed)", "EST"),
+    ("CST (fixed)", "CST"),
+    ("MST (fixed)", "MST"),
+    ("PST (fixed)", "PST"),
+]
+
+
+async def tz_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    current_lower = (current or "").lower()
+    choices: list[app_commands.Choice[str]] = []
+    for name, value in COMMON_TIMEZONES:
+        if not current_lower or current_lower in name.lower() or current_lower in value.lower():
+            choices.append(app_commands.Choice(name=name, value=value))
+        if len(choices) >= 25:
+            break
+    return choices
+
 # Common timezone shortcuts
 TZ_SHORTCUTS = {
     "EST": "America/New_York",
@@ -450,34 +491,6 @@ class StatusPanel(ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-class SetDowntimeModal(ui.Modal, title="Set Downtime"):
-    def __init__(self):
-        super().__init__()
-        self.start_input = ui.TextInput(
-            label="Start",
-            placeholder="e.g. 2/15 9:00 PM or 2026-02-15 21:00",
-            required=True,
-        )
-        self.end_input = ui.TextInput(
-            label="End",
-            placeholder="e.g. 2/15 11:00 PM or 2026-02-15 23:00",
-            required=True,
-        )
-        self.tz_input = ui.TextInput(
-            label="Timezone (optional)",
-            placeholder="UTC, EST, America/New_York",
-            required=False,
-        )
-        self.title_input = ui.TextInput(
-            label="Title (optional)",
-            placeholder="Patch 2.1 Update",
-            required=False,
-        )
-        self.add_item(self.start_input)
-        self.add_item(self.end_input)
-        self.add_item(self.tz_input)
-        self.add_item(self.title_input)
-
     async def on_submit(self, interaction: discord.Interaction):
         tz_value = (self.tz_input.value or "").strip() or "UTC"
         title_value = (self.title_input.value or "").strip() or "Scheduled Maintenance"
@@ -545,11 +558,26 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 
 # ============ MOD COMMANDS ============
-@tree.command(name="setdowntimewizard", description="[MOD] Set a maintenance window with a form")
+@tree.command(name="setdowntime", description="[MOD] Set a maintenance window")
+@app_commands.describe(
+    start="Start time (HH:MM, HH:MM AM, MM/DD HH:MM, MM/DD/YYYY HH:MM, or YYYY-MM-DD HH:MM)",
+    end="End time (same formats)",
+    tz="Timezone (autocomplete)",
+    title="Optional custom title"
+)
+@app_commands.autocomplete(tz=tz_autocomplete)
 @app_commands.check(require_allowed_guild)
 @app_commands.check(require_downtime_role)
-async def setdowntimewizard(interaction: discord.Interaction):
-    await interaction.response.send_modal(SetDowntimeModal())
+async def setdowntime(
+    interaction: discord.Interaction,
+    start: str,
+    end: str,
+    tz: Optional[str] = "UTC",
+    title: str = "Scheduled Maintenance",
+):
+    await apply_downtime(interaction, start, end, tz or "UTC", title, interaction.guild_id)
+
+
 
 
 @tree.command(name="panel", description="[MOD] Post the status panel in this channel")

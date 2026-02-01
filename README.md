@@ -3,11 +3,10 @@
 A Discord bot for scheduling maintenance windows and showing countdowns with a persistent status panel.
 
 ## Features
-- `/setup` — configure roles + panel channel (mods only)
-- `/setdowntimewizard` — guided form to set downtime (mods only)
-- `/cleardowntime` — clear downtime (mods only)
-- `/panel` — post a persistent status panel (mods only)
-- `/status` — check status (everyone)
+- `/setdowntime` - set downtime with slash options (mods only)
+- `/cleardowntime` - clear downtime (mods only)
+- `/panel` - post a persistent status panel (mods only)
+- `/status` - check status (everyone)
 
 ## Requirements
 - Python 3.9+
@@ -18,7 +17,7 @@ A Discord bot for scheduling maintenance windows and showing countdowns with a p
 git clone https://github.com/chilidogsonic/discord-update-bot.git
 cd discord-update-bot
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
@@ -51,7 +50,7 @@ DISCORD_CLEAR_GLOBAL_COMMANDS=0
 2) Copy the bot token into `.env`.
 3) Invite the bot with **applications.commands** + **bot** scopes.
 4) Give it permissions:
-   - Manage Server (for /setup)
+   - Manage Server
    - Send Messages
    - Embed Links
    - Read Message History
