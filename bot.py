@@ -1,5 +1,6 @@
 import os
 import json
+from typing import Optional, Union
 from dotenv import load_dotenv
 import discord
 from discord import app_commands, ui
@@ -115,7 +116,9 @@ def resolve_timezone(tz_input: str) -> str:
     return TZ_SHORTCUTS.get(tz_clean.upper(), tz_clean)
 
 
-def get_tzinfo(tz_name: str, tz_fallback: str | None = None) -> timezone | ZoneInfo | None:
+def get_tzinfo(
+    tz_name: str, tz_fallback: Optional[str] = None
+) -> Optional[Union[timezone, ZoneInfo]]:
     """Resolve a timezone name to tzinfo, with fallback to fixed offsets for abbreviations."""
     try:
         return ZoneInfo(tz_name)
@@ -136,7 +139,7 @@ def normalize_time_input(time_str: str) -> str:
     return cleaned
 
 
-def parse_time(time_str: str, tzinfo: timezone | ZoneInfo) -> datetime | None:
+def parse_time(time_str: str, tzinfo: Union[timezone, ZoneInfo]) -> Optional[datetime]:
     """Parse time string and convert from specified timezone to UTC."""
     formats = [
         "%Y-%m-%d %H:%M",
@@ -178,7 +181,7 @@ async def apply_downtime(
     start: str,
     end: str,
     tz: str,
-    title: str | None,
+    title: Optional[str],
 ) -> None:
     tz_resolved = resolve_timezone(tz)
     tzinfo = get_tzinfo(tz_resolved, tz_fallback=tz)
