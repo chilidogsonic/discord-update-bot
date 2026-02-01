@@ -326,6 +326,12 @@ class StatusPanel(ui.View):
     
     @ui.button(label=BUTTON_LABEL, style=discord.ButtonStyle.primary, emoji=HEART_EMOJI, custom_id="check_status")
     async def check_status(self, interaction: discord.Interaction, button: ui.Button):
+        if ALLOWED_GUILD_IDS and interaction.guild_id not in ALLOWED_GUILD_IDS:
+            await interaction.response.send_message(
+                "This bot is restricted to approved servers.",
+                ephemeral=True,
+            )
+            return
         embed = get_status_embed(full=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -371,8 +377,7 @@ class SetDowntimeModal(ui.Modal, title="Set Downtime"):
 
 
 # ============ EVENTS ============
-@tree.check
-async def enforce_allowed_guild(interaction: discord.Interaction) -> bool:
+def is_allowed_guild(interaction: discord.Interaction) -> bool:
     if not ALLOWED_GUILD_IDS:
         return True
     return interaction.guild_id in ALLOWED_GUILD_IDS
@@ -438,6 +443,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     title="Optional custom title"
 )
 @app_commands.default_permissions(manage_guild=True)
+@app_commands.check(is_allowed_guild)
 async def setdowntime(
     interaction: discord.Interaction, 
     start: str, 
@@ -450,12 +456,14 @@ async def setdowntime(
 
 @tree.command(name="setdowntimewizard", description="[MOD] Set a maintenance window with a form")
 @app_commands.default_permissions(manage_guild=True)
+@app_commands.check(is_allowed_guild)
 async def setdowntimewizard(interaction: discord.Interaction):
     await interaction.response.send_modal(SetDowntimeModal())
 
 
 @tree.command(name="panel", description="[MOD] Post the status panel in this channel")
 @app_commands.default_permissions(manage_guild=True)
+@app_commands.check(is_allowed_guild)
 async def post_panel(interaction: discord.Interaction):
     embed = get_status_embed(full=False)
     message = await interaction.channel.send(embed=embed, view=StatusPanel())
@@ -466,6 +474,7 @@ async def post_panel(interaction: discord.Interaction):
 
 @tree.command(name="cleardowntime", description="[MOD] Clear scheduled downtime")
 @app_commands.default_permissions(manage_guild=True)
+@app_commands.check(is_allowed_guild)
 async def cleardowntime(interaction: discord.Interaction):
     current_downtime["start"] = None
     current_downtime["end"] = None
@@ -477,6 +486,7 @@ async def cleardowntime(interaction: discord.Interaction):
 
 # ============ PUBLIC COMMAND ============
 @tree.command(name="status", description="Check server status (only you can see)")
+@app_commands.check(is_allowed_guild)
 async def status(interaction: discord.Interaction):
     embed = get_status_embed(full=True)
     await interaction.response.send_message(embed=embed, ephemeral=True)
