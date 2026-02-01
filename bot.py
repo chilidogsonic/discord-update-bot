@@ -121,14 +121,6 @@ def get_guild_panels(guild_id: int) -> list[dict[str, int]]:
     return [p for p in panel_messages if p.get("guild_id") == guild_id]
 
 
-def require_panel_exists(interaction: discord.Interaction) -> bool:
-    if not interaction.guild_id:
-        raise app_commands.CheckFailure("This command can only be used in a server.")
-    if not get_guild_panels(interaction.guild_id):
-        raise app_commands.CheckFailure("Please run /panel first so I know where to post updates.")
-    return True
-
-
 async def post_panel_message(channel: discord.abc.Messageable, guild_id: int) -> None:
     embed = get_status_embed(guild_id, full=False)
     message = await channel.send(embed=embed, view=StatusPanel())
@@ -555,7 +547,6 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 # ============ MOD COMMANDS ============
 @tree.command(name="setdowntimewizard", description="[MOD] Set a maintenance window with a form")
 @app_commands.check(require_allowed_guild)
-@app_commands.check(require_panel_exists)
 @app_commands.check(require_downtime_role)
 async def setdowntimewizard(interaction: discord.Interaction):
     await interaction.response.send_modal(SetDowntimeModal())
@@ -574,7 +565,6 @@ async def post_panel(interaction: discord.Interaction):
 
 @tree.command(name="cleardowntime", description="[MOD] Clear scheduled downtime")
 @app_commands.check(require_allowed_guild)
-@app_commands.check(require_panel_exists)
 @app_commands.check(require_downtime_role)
 async def cleardowntime(interaction: discord.Interaction):
     if not interaction.guild_id:
