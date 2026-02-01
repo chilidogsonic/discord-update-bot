@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from typing import Optional, Union
 from dotenv import load_dotenv
 import discord
@@ -12,6 +13,18 @@ load_dotenv()
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GUILD_ID = os.getenv("DISCORD_GUILD_ID")
 CLEAR_GLOBAL_COMMANDS = os.getenv("DISCORD_CLEAR_GLOBAL_COMMANDS", "").strip() == "1"
+
+
+def parse_id_list(value: str) -> list[int]:
+    # Extract any numeric IDs from the string to tolerate quotes/spaces/newlines.
+    return [int(x) for x in re.findall(r"\d{5,}", value or "")]
+
+
+SYNC_GUILD_IDS = parse_id_list(os.getenv("DISCORD_GUILD_IDS", ""))
+SYNC_GUILD_IDS += parse_id_list(os.getenv("DISCORD_GUILD_ID", ""))
+SYNC_GUILD_IDS = sorted(set(SYNC_GUILD_IDS))
+
+ALLOWED_GUILD_IDS = set(parse_id_list(os.getenv("ALLOWED_GUILD_IDS", "")))
 
 DATA_FILE = "bot_data.json"
 
@@ -358,19 +371,37 @@ class SetDowntimeModal(ui.Modal, title="Set Downtime"):
 
 
 # ============ EVENTS ============
+@tree.check
+async def enforce_allowed_guild(interaction: discord.Interaction) -> bool:
+    if not ALLOWED_GUILD_IDS:
+        return True
+    return interaction.guild_id in ALLOWED_GUILD_IDS
+
+
+@client.event
+async def on_guild_join(guild: discord.Guild):
+    if ALLOWED_GUILD_IDS and guild.id not in ALLOWED_GUILD_IDS:
+        await guild.leave()
+
+
 @client.event
 async def on_ready():
     client.add_view(StatusPanel())
     load_data()
-    if GUILD_ID:
-        guild_obj = discord.Object(id=int(GUILD_ID))
+    if SYNC_GUILD_IDS:
+        print(f"Sync guild IDs: {SYNC_GUILD_IDS}")
+    if ALLOWED_GUILD_IDS:
+        print(f"Allowed guild IDs: {sorted(ALLOWED_GUILD_IDS)}")
+    if SYNC_GUILD_IDS:
         if CLEAR_GLOBAL_COMMANDS:
             tree.clear_commands(guild=None)
             await tree.sync()
             print("Cleared global commands")
-        tree.copy_global_to(guild=guild_obj)
-        synced = await tree.sync(guild=guild_obj)
-        print(f"Synced {len(synced)} commands to guild {GUILD_ID}")
+        for guild_id in SYNC_GUILD_IDS:
+            guild_obj = discord.Object(id=guild_id)
+            tree.copy_global_to(guild=guild_obj)
+            synced = await tree.sync(guild=guild_obj)
+            print(f"Synced {len(synced)} commands to guild {guild_id}")
     else:
         synced = await tree.sync()
         print(f"Synced {len(synced)} global commands")
@@ -382,6 +413,8 @@ async def on_ready():
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         message = "You need the Manage Server permission to use this command."
+    elif isinstance(error, app_commands.CheckFailure):
+        message = "This bot is restricted to approved servers."
     elif isinstance(error, app_commands.CommandInvokeError):
         # Unwrap the original exception for clearer logging.
         message = "An internal error occurred while running that command."
