@@ -572,6 +572,33 @@ def parse_duration_minutes(raw: str) -> Optional[int]:
     return total
 
 
+def parse_strict_mmdd_time(
+    raw: str, tzinfo: Union[timezone, ZoneInfo]
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    """
+    Strict format: M/D H:MM AM/PM (e.g., 2/1 2:30 PM).
+    Returns (local_dt, utc_dt) or (None, None).
+    """
+    cleaned = normalize_time_input(raw)
+    match = re.fullmatch(r"(\d{1,2})/(\d{1,2})\s+(\d{1,2}):(\d{2})\s*([AP]M)", cleaned, re.IGNORECASE)
+    if not match:
+        return None, None
+    month = int(match.group(1))
+    day = int(match.group(2))
+    hour = int(match.group(3))
+    minute = int(match.group(4))
+    ampm = match.group(5).upper()
+    if not (1 <= month <= 12 and 1 <= day <= 31 and 1 <= hour <= 12 and 0 <= minute <= 59):
+        return None, None
+    hour24 = hour % 12 + (12 if ampm == "PM" else 0)
+    year = datetime.now(tzinfo).year
+    try:
+        local_dt = datetime(year, month, day, hour24, minute, tzinfo=tzinfo)
+    except ValueError:
+        return None, None
+    return local_dt, local_dt.astimezone(timezone.utc)
+
+
 SETUP_TIMEOUT_SECONDS = 180
 
 
@@ -769,9 +796,9 @@ async def setdowntimechat(interaction: discord.Interaction):
         await channel.send(f"{user.mention} Invalid timezone. Aborting.")
         return
 
-    # Step 2: start time (optional)
+    # Step 2: start time (strict format)
     while True:
-        prompt = "Start time? (e.g., 9:00 PM, 2 PM, 2/15 2:15 PM) or `skip` for now."
+        prompt = "Start time? Format: `M/D H:MM AM/PM` (e.g., `2/1 2:30 PM`) or `skip` for now."
         status, value = await prompt_user_message(channel, user, prompt)
         if status == "timeout":
             await channel.send(f"{user.mention} Setup timed out.")
@@ -783,15 +810,15 @@ async def setdowntimechat(interaction: discord.Interaction):
             start_local = datetime.now(tzinfo)
             start_dt = start_local.astimezone(timezone.utc)
             break
-        start_local, start_dt, _ = parse_time_info(value, tzinfo)
+        start_local, start_dt = parse_strict_mmdd_time(value, tzinfo)
         if not start_dt or not start_local:
-            await channel.send(f"{user.mention} Invalid start time. Try again.")
+            await channel.send(f"{user.mention} Invalid start time. Use `M/D H:MM AM/PM`.")
             continue
         break
 
     # Step 3: end time OR duration
     while True:
-        prompt = "End time or duration? (e.g., 11:00 PM, 2/15 11 PM OR 2h30m)"
+        prompt = "End time or duration? Use `M/D H:MM AM/PM` (e.g., `2/1 11:00 PM`) or `2h30m`"
         status, value = await prompt_user_message(channel, user, prompt)
         if status == "timeout":
             await channel.send(f"{user.mention} Setup timed out.")
@@ -809,13 +836,10 @@ async def setdowntimechat(interaction: discord.Interaction):
             end_dt = end_local.astimezone(timezone.utc)
             break
 
-        end_local, end_dt, end_time_only = parse_time_info(value, tzinfo)
+        end_local, end_dt = parse_strict_mmdd_time(value, tzinfo)
         if not end_dt or not end_local:
-            await channel.send(f"{user.mention} Invalid end time or duration. Try again.")
+            await channel.send(f"{user.mention} Invalid end time. Use `M/D H:MM AM/PM` or a duration like `2h30m`.")
             continue
-        if end_time_only and end_local <= start_local:
-            end_local = end_local + timedelta(days=1)
-            end_dt = end_local.astimezone(timezone.utc)
         break
 
     if end_dt <= start_dt:
