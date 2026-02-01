@@ -32,12 +32,8 @@ intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
-# Store downtime info
-current_downtime = {
-    "start": None,
-    "end": None,
-    "title": None
-}
+# Store downtime info per guild
+current_downtime: dict[int, dict[str, Optional[Union[int, str]]]] = {}
 
 panel_messages: list[dict[str, int]] = []
 
@@ -84,34 +80,92 @@ TZ_ABBR_OFFSETS = {
 }
 
 
+def get_default_downtime() -> dict[str, Optional[Union[int, str]]]:
+    return {"start": None, "end": None, "title": None}
+
+
+def get_downtime(guild_id: int) -> dict[str, Optional[Union[int, str]]]:
+    if guild_id not in current_downtime:
+        current_downtime[guild_id] = get_default_downtime()
+    return current_downtime[guild_id]
+
+
 def load_data() -> None:
     if not os.path.exists(DATA_FILE):
         return
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        current_downtime["start"] = data.get("start")
-        current_downtime["end"] = data.get("end")
-        current_downtime["title"] = data.get("title")
+
+        current_downtime.clear()
+        downtime_data = data.get("downtime")
+        if isinstance(downtime_data, dict):
+            for key, value in downtime_data.items():
+                try:
+                    guild_id = int(key)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(value, dict):
+                    current_downtime[guild_id] = {
+                        "start": value.get("start"),
+                        "end": value.get("end"),
+                        "title": value.get("title"),
+                    }
+        else:
+            # Backward compatibility: previous single-guild format
+            legacy_start = data.get("start")
+            legacy_end = data.get("end")
+            legacy_title = data.get("title")
+            if legacy_start or legacy_end or legacy_title:
+                target_id: Optional[int] = None
+                if len(ALLOWED_GUILD_IDS) == 1:
+                    target_id = next(iter(ALLOWED_GUILD_IDS))
+                elif len(SYNC_GUILD_IDS) == 1:
+                    target_id = SYNC_GUILD_IDS[0]
+                elif GUILD_ID and GUILD_ID.isdigit():
+                    target_id = int(GUILD_ID)
+                if target_id:
+                    current_downtime[target_id] = {
+                        "start": legacy_start,
+                        "end": legacy_end,
+                        "title": legacy_title,
+                    }
+                else:
+                    print("Legacy downtime data ignored: no single guild target found.")
+
         panels = data.get("panels", [])
+        panel_messages.clear()
         if isinstance(panels, list):
-            panel_messages.clear()
             for item in panels:
-                if (
-                    isinstance(item, dict)
-                    and isinstance(item.get("channel_id"), int)
-                    and isinstance(item.get("message_id"), int)
-                ):
-                    panel_messages.append(item)
+                if not isinstance(item, dict):
+                    continue
+                channel_id = item.get("channel_id")
+                message_id = item.get("message_id")
+                guild_id = item.get("guild_id")
+                if isinstance(channel_id, int) and isinstance(message_id, int) and isinstance(guild_id, int):
+                    panel_messages.append(
+                        {"channel_id": channel_id, "message_id": message_id, "guild_id": guild_id}
+                    )
+                elif isinstance(channel_id, int) and isinstance(message_id, int):
+                    # Legacy panel without guild_id; attach if only one known guild
+                    target_id = None
+                    if len(ALLOWED_GUILD_IDS) == 1:
+                        target_id = next(iter(ALLOWED_GUILD_IDS))
+                    elif len(SYNC_GUILD_IDS) == 1:
+                        target_id = SYNC_GUILD_IDS[0]
+                    elif GUILD_ID and GUILD_ID.isdigit():
+                        target_id = int(GUILD_ID)
+                    if target_id:
+                        panel_messages.append(
+                            {"channel_id": channel_id, "message_id": message_id, "guild_id": target_id}
+                        )
     except Exception as exc:
         print(f"Failed to load {DATA_FILE}: {exc!r}")
 
 
 def save_data() -> None:
     data = {
-        "start": current_downtime["start"],
-        "end": current_downtime["end"],
-        "title": current_downtime["title"],
+        "downtime": {str(gid): info for gid, info in current_downtime.items()},
         "panels": panel_messages,
     }
     try:
@@ -195,7 +249,14 @@ async def apply_downtime(
     end: str,
     tz: str,
     title: Optional[str],
+    guild_id: Optional[int],
 ) -> None:
+    if not guild_id:
+        await interaction.response.send_message(
+            "This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
     tz_resolved = resolve_timezone(tz)
     tzinfo = get_tzinfo(tz_resolved, tz_fallback=tz)
     if not tzinfo:
@@ -225,30 +286,33 @@ async def apply_downtime(
 
     final_title = (title or "").strip() or "Scheduled Maintenance"
 
-    current_downtime["start"] = int(start_dt.timestamp())
-    current_downtime["end"] = int(end_dt.timestamp())
-    current_downtime["title"] = final_title
+    downtime = get_downtime(guild_id)
+    downtime["start"] = int(start_dt.timestamp())
+    downtime["end"] = int(end_dt.timestamp())
+    downtime["title"] = final_title
     save_data()
-    await update_panels()
+    await update_panels(guild_id)
 
     await interaction.response.send_message(
         f"{HEART_EMOJI} Downtime set: {final_title}\n"
-        f"Start: <t:{current_downtime['start']}:f>\n"
-        f"End: <t:{current_downtime['end']}:f>\n"
+        f"Start: <t:{downtime['start']}:f>\n"
+        f"End: <t:{downtime['end']}:f>\n"
         f"(Entered in {tz_resolved})",
         ephemeral=True,
     )
 
 
-async def update_panels() -> None:
+async def update_panels(target_guild_id: Optional[int] = None) -> None:
     if not panel_messages:
         return
-    embed = get_status_embed(full=False)
     stale: list[dict[str, int]] = []
     for item in panel_messages:
+        guild_id = item.get("guild_id")
+        if target_guild_id and guild_id != target_guild_id:
+            continue
         channel_id = item.get("channel_id")
         message_id = item.get("message_id")
-        if not channel_id or not message_id:
+        if not channel_id or not message_id or not guild_id:
             stale.append(item)
             continue
         channel = client.get_channel(channel_id)
@@ -259,6 +323,7 @@ async def update_panels() -> None:
                 stale.append(item)
                 continue
             message = await channel.fetch_message(message_id)
+            embed = get_status_embed(guild_id, full=False)
             await message.edit(embed=embed, view=StatusPanel())
         except Exception:
             stale.append(item)
@@ -269,10 +334,12 @@ async def update_panels() -> None:
         save_data()
 
 
-def get_status_embed(full: bool = False) -> discord.Embed:
+def get_status_embed(guild_id: Optional[int], full: bool = False) -> discord.Embed:
     """Build status embed. full=True for detailed view, False for panel."""
-    
-    if not current_downtime["start"]:
+
+    downtime = get_default_downtime() if not guild_id else get_downtime(guild_id)
+
+    if not downtime["start"]:
         embed = discord.Embed(
             title=f"{ONLINE_EMOJI} Server Status",
             description="No maintenance scheduled.",
@@ -281,9 +348,9 @@ def get_status_embed(full: bool = False) -> discord.Embed:
         return embed
     
     now = datetime.now(timezone.utc).timestamp()
-    start_ts = current_downtime["start"]
-    end_ts = current_downtime["end"]
-    title = current_downtime["title"] or "Scheduled Maintenance"
+    start_ts = downtime["start"]
+    end_ts = downtime["end"]
+    title = downtime["title"] or "Scheduled Maintenance"
     
     if now < start_ts:
         status = f"{ONLINE_EMOJI} ONLINE"
@@ -332,7 +399,7 @@ class StatusPanel(ui.View):
                 ephemeral=True,
             )
             return
-        embed = get_status_embed(full=True)
+        embed = get_status_embed(interaction.guild_id, full=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -373,6 +440,7 @@ class SetDowntimeModal(ui.Modal, title="Set Downtime"):
             self.end_input.value,
             tz_value,
             title_value,
+            interaction.guild_id,
         )
 
 
@@ -435,25 +503,6 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 
 # ============ MOD COMMANDS ============
-@tree.command(name="setdowntime", description="[MOD] Set a maintenance window")
-@app_commands.describe(
-    start="Start time (HH:MM, HH:MM AM, MM/DD HH:MM, MM/DD/YYYY HH:MM, or YYYY-MM-DD HH:MM)",
-    end="End time (same formats)",
-    tz="Your timezone (EST, PST, UTC, etc.)",
-    title="Optional custom title"
-)
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.check(is_allowed_guild)
-async def setdowntime(
-    interaction: discord.Interaction, 
-    start: str, 
-    end: str, 
-    tz: str = "UTC",
-    title: str = "Scheduled Maintenance"
-):
-    await apply_downtime(interaction, start, end, tz, title)
-
-
 @tree.command(name="setdowntimewizard", description="[MOD] Set a maintenance window with a form")
 @app_commands.default_permissions(manage_guild=True)
 @app_commands.check(is_allowed_guild)
@@ -465,9 +514,14 @@ async def setdowntimewizard(interaction: discord.Interaction):
 @app_commands.default_permissions(manage_guild=True)
 @app_commands.check(is_allowed_guild)
 async def post_panel(interaction: discord.Interaction):
-    embed = get_status_embed(full=False)
+    if not interaction.guild_id:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+    embed = get_status_embed(interaction.guild_id, full=False)
     message = await interaction.channel.send(embed=embed, view=StatusPanel())
-    panel_messages.append({"channel_id": message.channel.id, "message_id": message.id})
+    panel_messages.append(
+        {"channel_id": message.channel.id, "message_id": message.id, "guild_id": interaction.guild_id}
+    )
     save_data()
     await interaction.response.send_message("Panel posted.", ephemeral=True)
 
@@ -476,11 +530,15 @@ async def post_panel(interaction: discord.Interaction):
 @app_commands.default_permissions(manage_guild=True)
 @app_commands.check(is_allowed_guild)
 async def cleardowntime(interaction: discord.Interaction):
-    current_downtime["start"] = None
-    current_downtime["end"] = None
-    current_downtime["title"] = None
+    if not interaction.guild_id:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+    downtime = get_downtime(interaction.guild_id)
+    downtime["start"] = None
+    downtime["end"] = None
+    downtime["title"] = None
     save_data()
-    await update_panels()
+    await update_panels(interaction.guild_id)
     await interaction.response.send_message("Downtime cleared.", ephemeral=True)
 
 
@@ -488,7 +546,10 @@ async def cleardowntime(interaction: discord.Interaction):
 @tree.command(name="status", description="Check server status (only you can see)")
 @app_commands.check(is_allowed_guild)
 async def status(interaction: discord.Interaction):
-    embed = get_status_embed(full=True)
+    if not interaction.guild_id:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+    embed = get_status_embed(interaction.guild_id, full=True)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 

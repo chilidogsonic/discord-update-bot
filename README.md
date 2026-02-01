@@ -3,7 +3,6 @@
 A Discord bot for scheduling maintenance windows and showing countdowns with a persistent status panel.
 
 ## Features
-- `/setdowntime` — set a maintenance window (mods only)
 - `/setdowntimewizard` — guided form to set downtime (mods only)
 - `/cleardowntime` — clear downtime (mods only)
 - `/panel` — post a persistent status panel (mods only)
@@ -63,4 +62,3 @@ DISCORD_CLEAR_GLOBAL_COMMANDS=0
 ## Security
 - Never commit your `.env` file or token.
 - Rotate your token if it is ever exposed.
-
