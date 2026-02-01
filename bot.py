@@ -452,8 +452,10 @@ def get_status_embed(guild_id: Optional[int], full: bool = False) -> discord.Emb
     elif now < end_ts:
         status = f"{MAINT_EMOJI} MAINTENANCE"
         color = MAINT_COLOR
+        remaining = format_remaining(int(end_ts - now))
         details = (
             f"**{title}**\n\n"
+            f"{TIME_EMOJI} Game back online in: **{remaining}**\n"
             f"{TIME_EMOJI} Servers back online: <t:{end_ts}:R>\n"
             f"{TIME_EMOJI} At: <t:{end_ts}:f>"
         ) if full else f"Back online <t:{end_ts}:R>"
@@ -470,8 +472,24 @@ def get_status_embed(guild_id: Optional[int], full: bool = False) -> discord.Emb
     
     if not full:
         embed.set_footer(text=FOOTER_TEXT)
+    else:
+        embed.set_footer(text="Times shown in your local timezone")
     
     return embed
+
+
+def format_remaining(seconds: int) -> str:
+    if seconds <= 0:
+        return "0 minutes"
+    minutes_total = seconds // 60
+    hours = minutes_total // 60
+    minutes = minutes_total % 60
+    parts = []
+    if hours:
+        parts.append(f"{hours} hour" + ("s" if hours != 1 else ""))
+    if minutes or not parts:
+        parts.append(f"{minutes} minute" + ("s" if minutes != 1 else ""))
+    return " ".join(parts)
 
 
 # ============ BUTTON VIEW ============
