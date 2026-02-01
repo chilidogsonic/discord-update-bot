@@ -56,15 +56,8 @@ DISCORD_CLEAR_GLOBAL_COMMANDS=0
    - Embed Links
    - Read Message History
 
-## Server Setup
-After inviting the bot to your server, run:
-```
-/setup
-```
-Then answer in chat:
-- Roles that can set downtime (role names or IDs; no @ needed)
-- Roles that can clear downtime (role names or IDs; no @ needed)
-- Channel for the status panel
+## Permissions
+Create a role named **downtime** and assign it to anyone who should manage the bot.
 
 ## Hosting Notes
 - Use a host that keeps the process online 24/7.
