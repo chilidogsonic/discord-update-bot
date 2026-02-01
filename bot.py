@@ -497,6 +497,50 @@ def format_remaining(seconds: int) -> str:
     return " ".join(parts)
 
 
+def parse_duration_minutes(raw: str) -> Optional[int]:
+    text = (raw or "").strip().lower().replace(" ", "")
+    if not text:
+        return None
+    match = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?", text)
+    if not match:
+        return None
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    total = hours * 60 + minutes
+    if total <= 0:
+        return None
+    return total
+
+
+SETUP_TIMEOUT_SECONDS = 180
+
+
+async def prompt_user_message(
+    channel: discord.abc.Messageable,
+    user: Union[discord.User, discord.Member],
+    prompt: str,
+) -> tuple[str, str]:
+    await channel.send(f"{user.mention} {prompt}")
+
+    def check(message: discord.Message) -> bool:
+        return message.author.id == user.id and message.channel.id == channel.id
+
+    try:
+        msg = await client.wait_for("message", check=check, timeout=SETUP_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        return "timeout", ""
+
+    content = msg.content.strip()
+    lowered = content.lower()
+    if lowered == "cancel":
+        return "cancel", ""
+    if lowered == "skip":
+        return "skip", ""
+    if lowered in {"none", "clear"}:
+        return "none", ""
+    return "value", content
+
+
 # ============ BUTTON VIEW ============
 class StatusPanel(ui.View):
     def __init__(self):
@@ -599,6 +643,129 @@ async def setdowntime(
     title: str = "Scheduled Maintenance",
 ):
     await apply_downtime(interaction, start, end, tz or "UTC", title, interaction.guild_id)
+
+@tree.command(name="setdowntimechat", description="[MOD] Guided setup in chat")
+@app_commands.check(require_allowed_guild)
+@app_commands.check(require_downtime_role)
+async def setdowntimechat(interaction: discord.Interaction):
+    if not interaction.guild or not interaction.guild_id or not interaction.channel:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    await interaction.response.send_message(
+        "Downtime setup started. Reply in this channel. Type `skip` to keep defaults or `cancel` to abort.",
+        ephemeral=False,
+    )
+
+    channel = interaction.channel
+    user = interaction.user
+
+    # Step 1: timezone
+    tz_resolved = "UTC"
+    while True:
+        prompt = "Timezone? (e.g., America/New_York, EST). Reply `skip` for UTC."
+        status, value = await prompt_user_message(channel, user, prompt)
+        if status == "timeout":
+            await channel.send(f"{user.mention} Setup timed out.")
+            return
+        if status == "cancel":
+            await channel.send(f"{user.mention} Setup cancelled.")
+            return
+        if status == "skip":
+            tz_resolved = "UTC"
+            break
+        tz_candidate = resolve_timezone(value)
+        tzinfo = get_tzinfo(tz_candidate, tz_fallback=value)
+        if not tzinfo:
+            await channel.send(f"{user.mention} Invalid timezone. Try again.")
+            continue
+        tz_resolved = tz_candidate
+        break
+
+    tzinfo = get_tzinfo(tz_resolved, tz_fallback=tz_resolved)
+    if not tzinfo:
+        await channel.send(f"{user.mention} Invalid timezone. Aborting.")
+        return
+
+    # Step 2: start time (optional)
+    while True:
+        prompt = "Start time? (e.g., 9:00 PM, 2/15 9:00 PM) or `skip` for now."
+        status, value = await prompt_user_message(channel, user, prompt)
+        if status == "timeout":
+            await channel.send(f"{user.mention} Setup timed out.")
+            return
+        if status == "cancel":
+            await channel.send(f"{user.mention} Setup cancelled.")
+            return
+        if status == "skip":
+            start_local = datetime.now(tzinfo)
+            start_dt = start_local.astimezone(timezone.utc)
+            break
+        start_local, start_dt, _ = parse_time_info(value, tzinfo)
+        if not start_dt or not start_local:
+            await channel.send(f"{user.mention} Invalid start time. Try again.")
+            continue
+        break
+
+    # Step 3: end time OR duration
+    while True:
+        prompt = "End time or duration? (e.g., 11:00 PM OR 2h30m)"
+        status, value = await prompt_user_message(channel, user, prompt)
+        if status == "timeout":
+            await channel.send(f"{user.mention} Setup timed out.")
+            return
+        if status == "cancel":
+            await channel.send(f"{user.mention} Setup cancelled.")
+            return
+        if status in {"skip", "none"}:
+            await channel.send(f"{user.mention} Please provide an end time or duration.")
+            continue
+
+        duration_minutes = parse_duration_minutes(value)
+        if duration_minutes is not None:
+            end_local = start_local + timedelta(minutes=duration_minutes)
+            end_dt = end_local.astimezone(timezone.utc)
+            break
+
+        end_local, end_dt, end_time_only = parse_time_info(value, tzinfo)
+        if not end_dt or not end_local:
+            await channel.send(f"{user.mention} Invalid end time or duration. Try again.")
+            continue
+        if end_time_only and end_local <= start_local:
+            end_local = end_local + timedelta(days=1)
+            end_dt = end_local.astimezone(timezone.utc)
+        break
+
+    if end_dt <= start_dt:
+        await channel.send(f"{user.mention} End time must be after start time.")
+        return
+
+    # Step 4: title (optional)
+    title_value = "Scheduled Maintenance"
+    prompt = "Title? (optional - `skip` for default)"
+    status, value = await prompt_user_message(channel, user, prompt)
+    if status == "timeout":
+        await channel.send(f"{user.mention} Setup timed out.")
+        return
+    if status == "cancel":
+        await channel.send(f"{user.mention} Setup cancelled.")
+        return
+    if status == "value" and value.strip():
+        title_value = value.strip()
+
+    downtime = get_downtime(interaction.guild_id)
+    downtime["start"] = int(start_dt.timestamp())
+    downtime["end"] = int(end_dt.timestamp())
+    downtime["title"] = title_value
+    save_data()
+    await update_panels(interaction.guild_id)
+
+    await channel.send(
+        f"{user.mention} Downtime set: {title_value}\n"
+        f"Start: <t:{downtime['start']}:f>\n"
+        f"End: <t:{downtime['end']}:f>\n"
+        f"Times shown in your local timezone."
+    )
 
 
 

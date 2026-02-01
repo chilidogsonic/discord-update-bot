@@ -4,6 +4,7 @@ A Discord bot for scheduling maintenance windows and showing countdowns with a p
 
 ## Features
 - `/setdowntime` - set downtime with slash options (mods only)
+- `/setdowntimechat` - guided chat setup (mods only)
 - `/cleardowntime` - clear downtime (mods only)
 - `/panel` - post a persistent status panel (mods only)
 - `/status` - check status (everyone)
