@@ -294,8 +294,10 @@ def normalize_time_input(time_str: str) -> str:
     return cleaned
 
 
-def parse_time(time_str: str, tzinfo: Union[timezone, ZoneInfo]) -> Optional[datetime]:
-    """Parse time string and convert from specified timezone to UTC."""
+def parse_time_info(
+    time_str: str, tzinfo: Union[timezone, ZoneInfo]
+) -> tuple[Optional[datetime], Optional[datetime], bool]:
+    """Parse time string. Returns (local_dt, utc_dt, is_time_only)."""
     formats = [
         "%Y-%m-%d %H:%M",
         "%Y-%m-%d %I:%M %p",
@@ -309,11 +311,12 @@ def parse_time(time_str: str, tzinfo: Union[timezone, ZoneInfo]) -> Optional[dat
     
     now_local = datetime.now(tzinfo)
     normalized = normalize_time_input(time_str)
-    
+
     for fmt in formats:
         try:
             parsed = datetime.strptime(normalized, fmt)
-            if fmt in ("%H:%M", "%I:%M %p"):
+            time_only = fmt in ("%H:%M", "%I:%M %p")
+            if time_only:
                 parsed = parsed.replace(year=now_local.year, month=now_local.month, day=now_local.day)
             elif fmt == "%m/%d %H:%M":
                 parsed = parsed.replace(year=now_local.year)
@@ -321,14 +324,10 @@ def parse_time(time_str: str, tzinfo: Union[timezone, ZoneInfo]) -> Optional[dat
                 parsed = parsed.replace(year=now_local.year)
             
             parsed = parsed.replace(tzinfo=tzinfo)
-            if fmt in ("%H:%M", "%I:%M %p"):
-                # If the time already passed today, assume next day to avoid "completed" schedules.
-                if parsed < now_local:
-                    parsed = parsed + timedelta(days=1)
-            return parsed.astimezone(timezone.utc)
+            return parsed, parsed.astimezone(timezone.utc), time_only
         except ValueError:
             continue
-    return None
+    return None, None, False
 
 
 async def apply_downtime(
@@ -356,8 +355,8 @@ async def apply_downtime(
         )
         return
 
-    start_dt = parse_time(start, tzinfo)
-    end_dt = parse_time(end, tzinfo)
+    start_local, start_dt, start_time_only = parse_time_info(start, tzinfo)
+    end_local, end_dt, end_time_only = parse_time_info(end, tzinfo)
 
     if not start_dt or not end_dt:
         await interaction.response.send_message(
@@ -367,6 +366,11 @@ async def apply_downtime(
             ephemeral=True,
         )
         return
+
+    # If both inputs are time-only and end is earlier, assume it crosses midnight.
+    if start_time_only and end_time_only and start_local and end_local and end_local <= start_local:
+        end_local = end_local + timedelta(days=1)
+        end_dt = end_local.astimezone(timezone.utc)
 
     if end_dt <= start_dt:
         await interaction.response.send_message("End time must be after start time.", ephemeral=True)
