@@ -37,6 +37,16 @@ current_downtime: dict[int, dict[str, Optional[Union[int, str]]]] = {}
 
 panel_messages: list[dict[str, int]] = []
 
+DEFAULT_GUILD_CONFIG = {
+    "set_roles": [],
+    "clear_roles": [],
+    "allow_set_all": False,
+    "allow_clear_all": False,
+    "panel_channel_id": None,
+}
+
+guild_config: dict[int, dict[str, Union[list[int], bool, Optional[int]]]] = {}
+
 # Theme (Infinity Nikki)
 ONLINE_COLOR = discord.Color.from_rgb(255, 173, 216)  # #ffadd8
 MAINT_COLOR = discord.Color.from_rgb(255, 122, 184)   # deeper pink
@@ -90,6 +100,94 @@ def get_downtime(guild_id: int) -> dict[str, Optional[Union[int, str]]]:
     return current_downtime[guild_id]
 
 
+def get_config(guild_id: int) -> dict[str, Union[list[int], bool, Optional[int]]]:
+    if guild_id not in guild_config:
+        guild_config[guild_id] = dict(DEFAULT_GUILD_CONFIG)
+    return guild_config[guild_id]
+
+
+def parse_role_input(raw: str, guild: discord.Guild) -> tuple[list[int], bool, list[str]]:
+    raw = (raw or "").strip()
+    if not raw:
+        return [], False, []
+    lowered = raw.lower()
+    if lowered in {"everyone", "all", "@everyone", "*"}:
+        return [], True, []
+
+    role_ids: list[int] = []
+    unknown: list[str] = []
+
+    for rid in parse_id_list(raw):
+        role = guild.get_role(rid)
+        if role:
+            role_ids.append(role.id)
+        else:
+            unknown.append(str(rid))
+
+    tokens = [t.strip() for t in raw.split(",") if t.strip()]
+    for token in tokens:
+        if re.search(r"\d{5,}", token):
+            continue
+        name = token.lstrip("@").strip()
+        match = next((r for r in guild.roles if r.name.lower() == name.lower()), None)
+        if match:
+            role_ids.append(match.id)
+        else:
+            unknown.append(name)
+
+    role_ids = sorted(set(role_ids))
+    unknown = sorted(set(unknown))
+    return role_ids, False, unknown
+
+
+def parse_channel_id(raw: str) -> tuple[Optional[int], Optional[str]]:
+    ids = parse_id_list(raw or "")
+    if not ids:
+        return None, "Please provide a channel mention or ID."
+    return ids[0], None
+
+
+def has_role_permission(interaction: discord.Interaction, kind: str) -> bool:
+    if not interaction.guild or not interaction.guild_id:
+        return False
+    member = interaction.user
+    if isinstance(member, discord.Member) and member.guild_permissions.manage_guild:
+        return True
+    cfg = get_config(interaction.guild_id)
+    if kind == "set":
+        if cfg.get("allow_set_all"):
+            return True
+        role_ids = cfg.get("set_roles", [])
+    elif kind == "clear":
+        if cfg.get("allow_clear_all"):
+            return True
+        role_ids = cfg.get("clear_roles", [])
+    else:
+        role_ids = []
+    if role_ids and isinstance(member, discord.Member):
+        member_role_ids = {role.id for role in member.roles}
+        return any(rid in member_role_ids for rid in role_ids)
+    return False
+
+
+def require_allowed_guild(interaction: discord.Interaction) -> bool:
+    if ALLOWED_GUILD_IDS and interaction.guild_id not in ALLOWED_GUILD_IDS:
+        raise app_commands.CheckFailure("This bot is restricted to approved servers.")
+    return True
+
+
+def require_set_permission(interaction: discord.Interaction) -> bool:
+    if not has_role_permission(interaction, "set"):
+        raise app_commands.CheckFailure("You don't have permission to set downtime.")
+    return True
+
+
+def require_clear_permission(interaction: discord.Interaction) -> bool:
+    if not has_role_permission(interaction, "clear"):
+        raise app_commands.CheckFailure("You don't have permission to clear downtime.")
+    return True
+
+
 def load_data() -> None:
     if not os.path.exists(DATA_FILE):
         return
@@ -133,6 +231,26 @@ def load_data() -> None:
                 else:
                     print("Legacy downtime data ignored: no single guild target found.")
 
+        config_data = data.get("config")
+        if isinstance(config_data, dict):
+            guild_config.clear()
+            for key, value in config_data.items():
+                try:
+                    guild_id = int(key)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(value, dict):
+                    continue
+                guild_config[guild_id] = {
+                    "set_roles": [int(x) for x in value.get("set_roles", []) if isinstance(x, int)],
+                    "clear_roles": [int(x) for x in value.get("clear_roles", []) if isinstance(x, int)],
+                    "allow_set_all": bool(value.get("allow_set_all", False)),
+                    "allow_clear_all": bool(value.get("allow_clear_all", False)),
+                    "panel_channel_id": value.get("panel_channel_id")
+                    if isinstance(value.get("panel_channel_id"), int)
+                    else None,
+                }
+
         panels = data.get("panels", [])
         panel_messages.clear()
         if isinstance(panels, list):
@@ -166,6 +284,7 @@ def load_data() -> None:
 def save_data() -> None:
     data = {
         "downtime": {str(gid): info for gid, info in current_downtime.items()},
+        "config": {str(gid): cfg for gid, cfg in guild_config.items()},
         "panels": panel_messages,
     }
     try:
@@ -444,13 +563,95 @@ class SetDowntimeModal(ui.Modal, title="Set Downtime"):
         )
 
 
+class SetupModal(ui.Modal, title="Server Setup"):
+    def __init__(self):
+        super().__init__()
+        self.set_roles = ui.TextInput(
+            label="Roles that can set downtime",
+            placeholder="Moderator, @Updates Team, 1234567890, or 'everyone'",
+            required=False,
+        )
+        self.clear_roles = ui.TextInput(
+            label="Roles that can clear downtime",
+            placeholder="Admin, @Ops, 1234567890, or 'everyone'",
+            required=False,
+        )
+        self.panel_channel = ui.TextInput(
+            label="Channel for status panel",
+            placeholder="#status-updates or 1234567890",
+            required=False,
+        )
+        self.add_item(self.set_roles)
+        self.add_item(self.clear_roles)
+        self.add_item(self.panel_channel)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not interaction.guild or not interaction.guild_id:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True,
+            )
+            return
+
+        set_roles, allow_set_all, unknown_set = parse_role_input(self.set_roles.value, interaction.guild)
+        clear_roles, allow_clear_all, unknown_clear = parse_role_input(
+            self.clear_roles.value, interaction.guild
+        )
+        channel_id = None
+        if self.panel_channel.value.strip():
+            channel_id, channel_error = parse_channel_id(self.panel_channel.value)
+            if channel_error:
+                await interaction.response.send_message(channel_error, ephemeral=True)
+                return
+            channel = interaction.guild.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await interaction.guild.fetch_channel(channel_id)
+                except Exception:
+                    channel = None
+            if channel is None:
+                await interaction.response.send_message(
+                    "Channel not found in this server.",
+                    ephemeral=True,
+                )
+                return
+
+        cfg = get_config(interaction.guild_id)
+        cfg["set_roles"] = set_roles
+        cfg["clear_roles"] = clear_roles
+        cfg["allow_set_all"] = allow_set_all
+        cfg["allow_clear_all"] = allow_clear_all
+        if channel_id is not None:
+            cfg["panel_channel_id"] = channel_id
+
+        save_data()
+
+        def role_list_display(role_ids: list[int], allow_all: bool) -> str:
+            if allow_all:
+                return "Everyone"
+            if not role_ids:
+                return "Manage Server"
+            return ", ".join(f"<@&{rid}>" for rid in role_ids)
+
+        summary = (
+            f"Setup saved.\n"
+            f"Set downtime: {role_list_display(set_roles, allow_set_all)}\n"
+            f"Clear downtime: {role_list_display(clear_roles, allow_clear_all)}\n"
+        )
+        if channel_id:
+            summary += f"Panel channel: <#{channel_id}>\n"
+        if unknown_set or unknown_clear:
+            summary += (
+                "Unrecognized roles: "
+                + ", ".join(sorted(set(unknown_set + unknown_clear)))
+                + "\n"
+            )
+        # No warnings if we get here
+
+        await interaction.response.send_message(summary.strip(), ephemeral=True)
+
+
 # ============ EVENTS ============
-def is_allowed_guild(interaction: discord.Interaction) -> bool:
-    if not ALLOWED_GUILD_IDS:
-        return True
-    return interaction.guild_id in ALLOWED_GUILD_IDS
-
-
 @client.event
 async def on_guild_join(guild: discord.Guild):
     if ALLOWED_GUILD_IDS and guild.id not in ALLOWED_GUILD_IDS:
@@ -487,7 +688,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     if isinstance(error, app_commands.MissingPermissions):
         message = "You need the Manage Server permission to use this command."
     elif isinstance(error, app_commands.CheckFailure):
-        message = "This bot is restricted to approved servers."
+        message = str(error) if str(error) else "You don't have permission to use this command."
     elif isinstance(error, app_commands.CommandInvokeError):
         # Unwrap the original exception for clearer logging.
         message = "An internal error occurred while running that command."
@@ -503,22 +704,46 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 
 # ============ MOD COMMANDS ============
-@tree.command(name="setdowntimewizard", description="[MOD] Set a maintenance window with a form")
+@tree.command(name="setup", description="[MOD] Configure roles and panel channel")
 @app_commands.default_permissions(manage_guild=True)
-@app_commands.check(is_allowed_guild)
+@app_commands.check(require_allowed_guild)
+async def setup(interaction: discord.Interaction):
+    await interaction.response.send_modal(SetupModal())
+
+
+@tree.command(name="setdowntimewizard", description="[MOD] Set a maintenance window with a form")
+@app_commands.check(require_allowed_guild)
+@app_commands.check(require_set_permission)
 async def setdowntimewizard(interaction: discord.Interaction):
     await interaction.response.send_modal(SetDowntimeModal())
 
 
 @tree.command(name="panel", description="[MOD] Post the status panel in this channel")
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.check(is_allowed_guild)
+@app_commands.check(require_allowed_guild)
+@app_commands.check(require_set_permission)
 async def post_panel(interaction: discord.Interaction):
     if not interaction.guild_id:
         await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
         return
+    cfg = get_config(interaction.guild_id)
+    target_channel = interaction.channel
+    channel_id = cfg.get("panel_channel_id")
+    if isinstance(channel_id, int):
+        channel = interaction.guild.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await interaction.guild.fetch_channel(channel_id)
+            except Exception:
+                channel = None
+        if channel is None:
+            await interaction.response.send_message(
+                "Configured panel channel not found. Please run /setup again.",
+                ephemeral=True,
+            )
+            return
+        target_channel = channel
     embed = get_status_embed(interaction.guild_id, full=False)
-    message = await interaction.channel.send(embed=embed, view=StatusPanel())
+    message = await target_channel.send(embed=embed, view=StatusPanel())
     panel_messages.append(
         {"channel_id": message.channel.id, "message_id": message.id, "guild_id": interaction.guild_id}
     )
@@ -527,8 +752,8 @@ async def post_panel(interaction: discord.Interaction):
 
 
 @tree.command(name="cleardowntime", description="[MOD] Clear scheduled downtime")
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.check(is_allowed_guild)
+@app_commands.check(require_allowed_guild)
+@app_commands.check(require_clear_permission)
 async def cleardowntime(interaction: discord.Interaction):
     if not interaction.guild_id:
         await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
@@ -544,7 +769,7 @@ async def cleardowntime(interaction: discord.Interaction):
 
 # ============ PUBLIC COMMAND ============
 @tree.command(name="status", description="Check server status (only you can see)")
-@app_commands.check(is_allowed_guild)
+@app_commands.check(require_allowed_guild)
 async def status(interaction: discord.Interaction):
     if not interaction.guild_id:
         await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)

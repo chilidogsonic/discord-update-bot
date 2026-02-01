@@ -3,6 +3,7 @@
 A Discord bot for scheduling maintenance windows and showing countdowns with a persistent status panel.
 
 ## Features
+- `/setup` — configure roles + panel channel (mods only)
 - `/setdowntimewizard` — guided form to set downtime (mods only)
 - `/cleardowntime` — clear downtime (mods only)
 - `/panel` — post a persistent status panel (mods only)
@@ -50,10 +51,20 @@ DISCORD_CLEAR_GLOBAL_COMMANDS=0
 2) Copy the bot token into `.env`.
 3) Invite the bot with **applications.commands** + **bot** scopes.
 4) Give it permissions:
-   - Manage Server (for mod commands)
+   - Manage Server (for /setup)
    - Send Messages
    - Embed Links
    - Read Message History
+
+## Server Setup
+After inviting the bot to your server, run:
+```
+/setup
+```
+Then answer:
+- Roles that can set downtime
+- Roles that can clear downtime
+- Channel for the status panel
 
 ## Hosting Notes
 - Use a host that keeps the process online 24/7.
