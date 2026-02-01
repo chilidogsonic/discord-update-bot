@@ -458,8 +458,7 @@ def get_status_embed(guild_id: Optional[int], full: bool = False) -> discord.Emb
         details = (
             f"**{title}**\n\n"
             f"{TIME_EMOJI} Game back online in: **{remaining}**\n"
-            f"{TIME_EMOJI} Servers back online: <t:{end_ts}:R>\n"
-            f"{TIME_EMOJI} At: <t:{end_ts}:f>"
+            f"{TIME_EMOJI} Maintenance ends at: <t:{end_ts}:f>"
         ) if full else f"Back online <t:{end_ts}:R>"
     else:
         status = f"{ONLINE_EMOJI} ONLINE"
