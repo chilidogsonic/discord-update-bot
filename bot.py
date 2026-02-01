@@ -443,8 +443,10 @@ def get_status_embed(guild_id: Optional[int], full: bool = False) -> discord.Emb
     if now < start_ts:
         status = f"{ONLINE_EMOJI} ONLINE"
         color = ONLINE_COLOR
+        remaining = format_remaining(int(end_ts - now))
         details = (
             f"**Upcoming Maintenance:** {title}\n\n"
+            f"{TIME_EMOJI} Game back online in: **{remaining}**\n"
             f"{TIME_EMOJI} Downtime begins: <t:{start_ts}:R>\n"
             f"{TIME_EMOJI} Start: <t:{start_ts}:f>\n"
             f"{TIME_EMOJI} End: <t:{end_ts}:f>"
