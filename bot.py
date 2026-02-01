@@ -188,6 +188,47 @@ def require_clear_permission(interaction: discord.Interaction) -> bool:
     return True
 
 
+def format_role_list(role_ids: list[int], allow_all: bool) -> str:
+    if allow_all:
+        return "everyone"
+    if not role_ids:
+        return "Manage Server"
+    return ", ".join(f"<@&{rid}>" for rid in role_ids)
+
+
+def format_channel(channel_id: Optional[int]) -> str:
+    return f"<#{channel_id}>" if channel_id else "Not set"
+
+
+SETUP_TIMEOUT_SECONDS = 180
+
+
+async def prompt_user_message(
+    channel: discord.abc.Messageable,
+    user: Union[discord.User, discord.Member],
+    prompt: str,
+) -> tuple[str, str]:
+    await channel.send(f"{user.mention} {prompt}")
+
+    def check(message: discord.Message) -> bool:
+        return message.author.id == user.id and message.channel.id == channel.id
+
+    try:
+        msg = await client.wait_for("message", check=check, timeout=SETUP_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        return "timeout", ""
+
+    content = msg.content.strip()
+    lowered = content.lower()
+    if lowered == "cancel":
+        return "cancel", ""
+    if lowered == "skip":
+        return "skip", ""
+    if lowered in {"none", "clear"}:
+        return "none", ""
+    return "value", content
+
+
 def load_data() -> None:
     if not os.path.exists(DATA_FILE):
         return
@@ -563,28 +604,6 @@ class SetDowntimeModal(ui.Modal, title="Set Downtime"):
         )
 
 
-class SetupModal(ui.Modal, title="Server Setup"):
-    def __init__(self):
-        super().__init__()
-        self.set_roles = ui.TextInput(
-            label="Roles that can set downtime",
-            placeholder="Moderator, @Updates Team, 1234567890, or 'everyone'",
-            required=False,
-        )
-        self.clear_roles = ui.TextInput(
-            label="Roles that can clear downtime",
-            placeholder="Admin, @Ops, 1234567890, or 'everyone'",
-            required=False,
-        )
-        self.panel_channel = ui.TextInput(
-            label="Channel for status panel",
-            placeholder="#status-updates or 1234567890",
-            required=False,
-        )
-        self.add_item(self.set_roles)
-        self.add_item(self.clear_roles)
-        self.add_item(self.panel_channel)
-
     async def on_submit(self, interaction: discord.Interaction):
         if not interaction.guild or not interaction.guild_id:
             await interaction.response.send_message(
@@ -708,7 +727,117 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 @app_commands.default_permissions(manage_guild=True)
 @app_commands.check(require_allowed_guild)
 async def setup(interaction: discord.Interaction):
-    await interaction.response.send_modal(SetupModal())
+    if not interaction.guild or not interaction.guild_id or not interaction.channel:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    await interaction.response.send_message(
+        "Setup started. Reply in this channel. Type `skip` to keep current values or `cancel` to abort.",
+        ephemeral=False,
+    )
+
+    guild = interaction.guild
+    channel = interaction.channel
+    user = interaction.user
+    cfg = get_config(interaction.guild_id)
+
+    # Step 1: roles that can set downtime
+    while True:
+        prompt = (
+            f"Roles that can set downtime? Current: {format_role_list(cfg['set_roles'], cfg['allow_set_all'])}\n"
+            "Reply with role names or mentions separated by commas. Use `everyone`, `none`, or `skip`."
+        )
+        status, value = await prompt_user_message(channel, user, prompt)
+        if status == "timeout":
+            await channel.send(f"{user.mention} Setup timed out.")
+            return
+        if status == "cancel":
+            await channel.send(f"{user.mention} Setup cancelled.")
+            return
+        if status == "skip":
+            break
+        if status == "none":
+            cfg["set_roles"] = []
+            cfg["allow_set_all"] = False
+            break
+        role_ids, allow_all, unknown = parse_role_input(value, guild)
+        if unknown:
+            await channel.send(f"{user.mention} Unknown roles: {', '.join(unknown)}. Try again.")
+            continue
+        cfg["set_roles"] = role_ids
+        cfg["allow_set_all"] = allow_all
+        break
+
+    # Step 2: roles that can clear downtime
+    while True:
+        prompt = (
+            f"Roles that can clear downtime? Current: {format_role_list(cfg['clear_roles'], cfg['allow_clear_all'])}\n"
+            "Reply with role names or mentions separated by commas. Use `everyone`, `none`, or `skip`."
+        )
+        status, value = await prompt_user_message(channel, user, prompt)
+        if status == "timeout":
+            await channel.send(f"{user.mention} Setup timed out.")
+            return
+        if status == "cancel":
+            await channel.send(f"{user.mention} Setup cancelled.")
+            return
+        if status == "skip":
+            break
+        if status == "none":
+            cfg["clear_roles"] = []
+            cfg["allow_clear_all"] = False
+            break
+        role_ids, allow_all, unknown = parse_role_input(value, guild)
+        if unknown:
+            await channel.send(f"{user.mention} Unknown roles: {', '.join(unknown)}. Try again.")
+            continue
+        cfg["clear_roles"] = role_ids
+        cfg["allow_clear_all"] = allow_all
+        break
+
+    # Step 3: panel channel
+    while True:
+        prompt = (
+            f"Channel for status panel? Current: {format_channel(cfg.get('panel_channel_id'))}\n"
+            "Reply with a channel mention or ID. Use `none` to clear or `skip` to keep."
+        )
+        status, value = await prompt_user_message(channel, user, prompt)
+        if status == "timeout":
+            await channel.send(f"{user.mention} Setup timed out.")
+            return
+        if status == "cancel":
+            await channel.send(f"{user.mention} Setup cancelled.")
+            return
+        if status == "skip":
+            break
+        if status == "none":
+            cfg["panel_channel_id"] = None
+            break
+        channel_id, err = parse_channel_id(value)
+        if err:
+            await channel.send(f"{user.mention} {err}")
+            continue
+        target = guild.get_channel(channel_id)
+        if target is None:
+            try:
+                target = await guild.fetch_channel(channel_id)
+            except Exception:
+                target = None
+        if target is None:
+            await channel.send(f"{user.mention} Channel not found in this server.")
+            continue
+        cfg["panel_channel_id"] = channel_id
+        break
+
+    save_data()
+
+    summary = (
+        f"Setup saved.\n"
+        f"Set downtime: {format_role_list(cfg['set_roles'], cfg['allow_set_all'])}\n"
+        f"Clear downtime: {format_role_list(cfg['clear_roles'], cfg['allow_clear_all'])}\n"
+        f"Panel channel: {format_channel(cfg.get('panel_channel_id'))}"
+    )
+    await channel.send(f"{user.mention} {summary}")
 
 
 @tree.command(name="setdowntimewizard", description="[MOD] Set a maintenance window with a form")
