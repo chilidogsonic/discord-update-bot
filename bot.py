@@ -350,18 +350,28 @@ def parse_time_info(
 ) -> tuple[Optional[datetime], Optional[datetime], bool]:
     """Parse time string. Returns (local_dt, utc_dt, is_time_only)."""
     formats = [
+        # Full formats with 4-digit year
         "%Y-%m-%d %H:%M",
         "%Y-%m-%d %I:%M %p",
         "%Y-%m-%d %I %p",
-        "%m/%d %H:%M",
-        "%m/%d %I:%M %p",
-        "%m/%d %I %p",
         "%m/%d/%Y %H:%M",
         "%m/%d/%Y %I:%M %p",
         "%m/%d/%Y %I %p",
+        # 2-digit year formats (e.g., 2/1/26 2:30 PM)
+        "%m/%d/%y %H:%M",
+        "%m/%d/%y %I:%M %p",
+        "%m/%d/%y %I %p",
+        "%m/%d/%y %I%p",  # No space before AM/PM (2/1/26 4pm)
+        # Month/day without year
+        "%m/%d %H:%M",
+        "%m/%d %I:%M %p",
+        "%m/%d %I %p",
+        "%m/%d %I%p",  # No space before AM/PM (2/1 4pm)
+        # Time-only formats
         "%H:%M",
         "%I:%M %p",
         "%I %p",
+        "%I%p",  # No space before AM/PM (4pm)
     ]
     
     now_local = datetime.now(tzinfo)
@@ -370,14 +380,16 @@ def parse_time_info(
     for fmt in formats:
         try:
             parsed = datetime.strptime(normalized, fmt)
-            time_only = fmt in ("%H:%M", "%I:%M %p")
+            # Determine if this is a time-only format (no date component)
+            time_only = fmt in ("%H:%M", "%I:%M %p", "%I %p", "%I%p")
+
             if time_only:
+                # For time-only, fill in today's date
                 parsed = parsed.replace(year=now_local.year, month=now_local.month, day=now_local.day)
-            elif fmt == "%m/%d %H:%M":
+            elif fmt in ("%m/%d %H:%M", "%m/%d %I:%M %p", "%m/%d %I %p", "%m/%d %I%p"):
+                # For month/day without year, fill in current year
                 parsed = parsed.replace(year=now_local.year)
-            elif fmt == "%m/%d %I:%M %p":
-                parsed = parsed.replace(year=now_local.year)
-            
+
             parsed = parsed.replace(tzinfo=tzinfo)
             return parsed, parsed.astimezone(timezone.utc), time_only
         except ValueError:
@@ -406,11 +418,15 @@ async def apply_downtime(
     tzinfo = get_tzinfo(tz_resolved, tz_fallback=tz)
     if not tzinfo:
         await interaction.response.send_message(
-            "Invalid timezone.\n"
-            "Examples: `EST`, `PST`, `UTC`, `America/New_York`\n"
-            "Or use GMT offsets like `GMT -05:00` / `GMT+05:30`.\n"
-            "Reference: https://greenwichmeantime.com/current-time/\n"
-            "Note: On Windows, install `tzdata` (pip install tzdata) for full IANA support.",
+            f"{HEART_EMOJI} **Invalid timezone**\n\n"
+            "**Common timezones:**\n"
+            "• `EST`, `CST`, `MST`, `PST` (US)\n"
+            "• `UTC`, `GMT`\n"
+            "• `America/New_York`, `Europe/London`\n"
+            "• `GMT-05:00`, `UTC+05:30` (offset format)\n\n"
+            f"**Your input:** `{tz}`\n\n"
+            "💡 **Windows users:** Install `tzdata` for full timezone support:\n"
+            "`pip install tzdata`",
             ephemeral=True,
         )
         return
@@ -420,9 +436,16 @@ async def apply_downtime(
 
     if not start_dt or not end_dt:
         await interaction.response.send_message(
-            "Invalid time format.\n"
-            "Formats: `HH:MM`, `HH:MM AM`, `MM/DD HH:MM`, `MM/DD HH:MM AM`, "
-            "`MM/DD/YYYY HH:MM`, `YYYY-MM-DD HH:MM`",
+            f"{HEART_EMOJI} **Invalid time format**\n\n"
+            "**Supported formats:**\n"
+            "• `2/1/2026 2:30 PM` (full date with 4-digit year)\n"
+            "• `2/1/26 2:30 PM` (2-digit year)\n"
+            "• `2/1 2:30 PM` (month/day, current year)\n"
+            "• `2:30 PM` (time only, today's date)\n"
+            "• `4pm` (casual time format)\n\n"
+            "**Your input:**\n"
+            f"Start: `{start}`\n"
+            f"End: `{end}`",
             ephemeral=True,
         )
         return
@@ -433,7 +456,13 @@ async def apply_downtime(
         end_dt = end_local.astimezone(timezone.utc)
 
     if end_dt <= start_dt:
-        await interaction.response.send_message("End time must be after start time.", ephemeral=True)
+        await interaction.response.send_message(
+            f"{HEART_EMOJI} **End time must be after start time**\n\n"
+            f"Start: <t:{int(start_dt.timestamp())}:f>\n"
+            f"End: <t:{int(end_dt.timestamp())}:f>\n\n"
+            "Please check your times and try again.",
+            ephemeral=True
+        )
         return
 
     final_title = (title or "").strip() or "Scheduled Maintenance"
@@ -572,116 +601,36 @@ def parse_duration_minutes(raw: str) -> Optional[int]:
     return total
 
 
-def parse_strict_mmdd_time(
-    raw: str, tzinfo: Union[timezone, ZoneInfo]
-) -> tuple[Optional[datetime], Optional[datetime]]:
-    """
-    Strict format: M/D H:MM AM/PM (e.g., 2/1 2:30 PM).
-    Returns (local_dt, utc_dt) or (None, None).
-    """
-    # Handle potential invisible Unicode characters that might interfere with parsing
-    # Remove zero-width characters and other problematic Unicode
-    cleaned = raw.strip()
-    # Remove common zero-width Unicode characters
-    cleaned = re.sub(r'[\u200B-\u200D\uFEFF]', '', cleaned)
-
-    # Apply normalization
-    cleaned = normalize_time_input(cleaned)
-
-    # Helpful debug in logs when parsing fails
-    if os.getenv("DEBUG_TIME_PARSE", "").strip() == "1":
-        print(f"Strict time parse: raw={raw!r} normalized={cleaned!r}")
-
-    # More flexible pattern to handle potential spacing issues
-    match = re.fullmatch(r"(\d{1,2})/(\d{1,2})\s+(\d{1,2}):(\d{2})\s*([AP]M)", cleaned, re.IGNORECASE)
-    if not match:
-        if os.getenv("DEBUG_TIME_PARSE", "").strip() == "1":
-            print(f"Strict time parse failed: pattern didn't match")
-        return None, None
-
-    month = int(match.group(1))
-    day = int(match.group(2))
-    hour = int(match.group(3))
-    minute = int(match.group(4))
-    ampm = match.group(5).upper()
-
-    if not (1 <= month <= 12 and 1 <= day <= 31 and 1 <= hour <= 12 and 0 <= minute <= 59):
-        if os.getenv("DEBUG_TIME_PARSE", "").strip() == "1":
-            print(f"Strict time parse failed: invalid values - month={month}, day={day}, hour={hour}, minute={minute}")
-        return None, None
-
-    hour24 = hour % 12 + (12 if ampm == "PM" else 0)
-    year = datetime.now(tzinfo).year
-
-    try:
-        local_dt = datetime(year, month, day, hour24, minute, tzinfo=tzinfo)
-    except ValueError as e:
-        if os.getenv("DEBUG_TIME_PARSE", "").strip() == "1":
-            print(f"Strict time parse failed: ValueError - {e}")
-        return None, None
-
-    return local_dt, local_dt.astimezone(timezone.utc)
-
-
-SETUP_TIMEOUT_SECONDS = 180
-
-
-async def prompt_user_message(
-    channel: discord.abc.Messageable,
-    user: Union[discord.User, discord.Member],
-    prompt: str,
-) -> tuple[str, str]:
-    await channel.send(f"{user.mention} {prompt}")
-
-    def check(message: discord.Message) -> bool:
-        return message.author.id == user.id and message.channel.id == channel.id
-
-    try:
-        msg = await client.wait_for("message", check=check, timeout=SETUP_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError:
-        return "timeout", ""
-
-    content = msg.content.strip()
-    lowered = content.lower()
-    if lowered == "cancel":
-        return "cancel", ""
-    if lowered == "skip":
-        return "skip", ""
-    if lowered in {"none", "clear"}:
-        return "none", ""
-    return "value", content
-
-
-# ============ MOdal Classes ============
+# ============ Modal Class ============
 class DowntimeModal(ui.Modal, title="Set Downtime"):
     def __init__(self):
         super().__init__()
 
     start_input = ui.TextInput(
-        label="Start Time (Format: MM/DD/YYYY HH:MM AM/PM)",
-        placeholder="e.g., 02/01/2026 2:30 PM",
+        label="Start Time",
+        placeholder="2/1/26 2:30 PM  or  2/1/2026 2:30 PM  or  4pm",
         required=True,
         max_length=50
     )
 
     end_input = ui.TextInput(
-        label="End Time (Format: MM/DD/YYYY HH:MM AM/PM or duration like 2h30m)",
-        placeholder="e.g., 02/01/2026 4:00 PM or 1h30m",
+        label="End Time OR Duration",
+        placeholder="2/1/26 4:00 PM  or  2h30m  (h=hours, m=minutes)",
         required=True,
         max_length=50
     )
 
     tz_input = ui.TextInput(
-        label="Timezone",
-        placeholder="e.g., EST, America/New_York, GMT-05:00",
+        label="Timezone (optional, defaults to UTC)",
+        placeholder="EST  or  America/New_York  or  GMT-05:00",
         required=False,
         max_length=50,
         default="UTC"
     )
 
     title_input = ui.TextInput(
-        label="Downtime Title",
-        placeholder="e.g., Scheduled Maintenance",
+        label="Downtime Title (optional)",
+        placeholder="Scheduled Maintenance",
         required=False,
         max_length=100,
         default="Scheduled Maintenance"
@@ -699,11 +648,12 @@ class DowntimeModal(ui.Modal, title="Set Downtime"):
             tzinfo = get_tzinfo(tz_resolved, tz_fallback=tz_value)
             if not tzinfo:
                 await interaction.response.send_message(
-                    "Invalid timezone.\n"
-                    "Examples: `EST`, `PST`, `UTC`, `America/New_York`\n"
-                    "Or use GMT offsets like `GMT -05:00` / `GMT+05:30`.\n"
-                    "Reference: https://greenwichmeantime.com/current-time/\n"
-                    "Note: On Windows, install `tzdata` (pip install tzdata) for full IANA support.",
+                    f"{HEART_EMOJI} **Invalid timezone**\n\n"
+                    "**Common timezones:**\n"
+                    "• `EST`, `CST`, `MST`, `PST`\n"
+                    "• `UTC`, `America/New_York`\n"
+                    "• `GMT-05:00` (offset format)\n\n"
+                    f"**Your input:** `{tz_value}`",
                     ephemeral=True,
                 )
                 return
@@ -711,8 +661,13 @@ class DowntimeModal(ui.Modal, title="Set Downtime"):
             start_local, start_dt, start_time_only = parse_time_info(self.start_input.value, tzinfo)
             if not start_dt or not start_local:
                 await interaction.response.send_message(
-                    "Invalid start time format.\n"
-                    "Format: `MM/DD/YYYY HH:MM AM/PM` (e.g., `02/01/2026 2:30 PM`)",
+                    f"{HEART_EMOJI} **Invalid start time format**\n\n"
+                    "**Examples:**\n"
+                    "• `2/1/2026 2:30 PM`\n"
+                    "• `2/1/26 2:30 PM`\n"
+                    "• `2/1 2:30 PM`\n"
+                    "• `4pm`\n\n"
+                    f"**Your input:** `{self.start_input.value}`",
                     ephemeral=True,
                 )
                 return
@@ -722,7 +677,13 @@ class DowntimeModal(ui.Modal, title="Set Downtime"):
 
             # Validate end time is after start time
             if end_dt <= start_dt:
-                await interaction.response.send_message("End time must be after start time.", ephemeral=True)
+                await interaction.response.send_message(
+                    f"{HEART_EMOJI} **End time must be after start time**\n\n"
+                    f"Start: <t:{int(start_dt.timestamp())}:f>\n"
+                    f"End: <t:{int(end_dt.timestamp())}:f>\n\n"
+                    f"Duration entered: `{self.end_input.value}` ({duration_minutes} minutes)",
+                    ephemeral=True
+                )
                 return
 
             # Apply downtime with calculated end time
@@ -747,6 +708,10 @@ class DowntimeModal(ui.Modal, title="Set Downtime"):
                 f"(Entered in {tz_resolved})",
                 ephemeral=True,
             )
+
+            # Log successful submission
+            print(f"✓ Downtime set via modal by {interaction.user} in {interaction.guild}: "
+                  f"{title_value} | {start_local} to {end_local} ({tz_resolved})")
         else:
             # Regular start/end time format
             await apply_downtime(
@@ -757,6 +722,44 @@ class DowntimeModal(ui.Modal, title="Set Downtime"):
                 title_value,
                 interaction.guild_id,
             )
+
+            # Log successful submission
+            print(f"✓ Downtime set via modal by {interaction.user} in {interaction.guild}: "
+                  f"{title_value} | {tz_resolved}")
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        """Handle errors that occur during modal submission."""
+        import traceback
+
+        # Log the full error to console for debugging
+        print(f"\n{'='*60}")
+        print(f"ERROR in DowntimeModal submission:")
+        print(f"User: {interaction.user} ({interaction.user.id})")
+        print(f"Guild: {interaction.guild} ({interaction.guild_id})")
+        print(f"Error Type: {type(error).__name__}")
+        print(f"Error Message: {str(error)}")
+        print(f"Traceback:")
+        traceback.print_exception(type(error), error, error.__traceback__)
+        print(f"{'='*60}\n")
+
+        # Send user-friendly error message
+        error_msg = (
+            f"{HEART_EMOJI} **Oops! Something went wrong.**\n\n"
+            f"**Error:** {str(error)}\n\n"
+            f"**Tips:**\n"
+            f"• Start time format: `MM/DD/YYYY HH:MM AM/PM` (e.g., `2/1/2026 2:30 PM`)\n"
+            f"• End time: Same format OR duration (e.g., `2h30m`)\n"
+            f"• Timezone: `EST`, `PST`, `UTC`, `America/New_York`, or `GMT-05:00`\n\n"
+            f"If this error persists, please contact an administrator."
+        )
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(error_msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(error_msg, ephemeral=True)
+        except Exception as send_error:
+            print(f"Failed to send error message to user: {send_error}")
 
 # ============ BUTTON VIEW ============
 class StatusPanel(ui.View):
@@ -787,6 +790,21 @@ async def on_guild_join(guild: discord.Guild):
 async def on_ready():
     client.add_view(StatusPanel())
     load_data()
+
+    # Check for tzdata on Windows
+    import platform
+    if platform.system() == "Windows":
+        try:
+            import tzdata
+            print("✓ tzdata is installed (full timezone support available)")
+        except ImportError:
+            print("\n" + "="*60)
+            print("⚠️  WARNING: tzdata is not installed!")
+            print("   Windows requires tzdata for full timezone support.")
+            print("   Install it with: pip install tzdata")
+            print("   Without it, only GMT offset timezones (e.g., GMT-05:00) will work.")
+            print("="*60 + "\n")
+
     if SYNC_GUILD_IDS:
         print(f"Sync guild IDs: {SYNC_GUILD_IDS}")
     if ALLOWED_GUILD_IDS:
@@ -847,15 +865,6 @@ async def setdowntime(
     title: str = "Scheduled Maintenance",
 ):
     await apply_downtime(interaction, start, end, tz or "UTC", title, interaction.guild_id)
-
-@tree.command(name="setdowntimechat", description="[MOD] Guided setup in chat (DEPRECATED - use /setdowntimemodal instead)")
-@app_commands.check(require_allowed_guild)
-@app_commands.check(require_downtime_role)
-async def setdowntimechat(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        "This command is deprecated. Please use `/setdowntimemodal` instead for a mobile-friendly experience!",
-        ephemeral=True
-    )
 
 
 @tree.command(name="setdowntimemodal", description="[MOD] Set downtime using a mobile-friendly form")
