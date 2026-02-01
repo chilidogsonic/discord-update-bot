@@ -761,6 +761,161 @@ class DowntimeModal(ui.Modal, title="Set Downtime"):
         except Exception as send_error:
             print(f"Failed to send error message to user: {send_error}")
 
+class ExtendDowntimeModal(ui.Modal, title="Extend Downtime"):
+    def __init__(self):
+        super().__init__()
+
+    new_end_input = ui.TextInput(
+        label="New End Time OR Additional Duration",
+        placeholder="2/1/26 6:00 PM  or  +2h  (to add 2 hours)",
+        required=True,
+        max_length=50
+    )
+
+    tz_input = ui.TextInput(
+        label="Timezone (optional, defaults to UTC)",
+        placeholder="EST  or  America/New_York  or  GMT-05:00",
+        required=False,
+        max_length=50,
+        default="UTC"
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not interaction.guild_id:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True,
+            )
+            return
+
+        # Get current downtime
+        downtime = get_downtime(interaction.guild_id)
+        if not downtime.get("start") or not downtime.get("end"):
+            await interaction.response.send_message(
+                f"{HEART_EMOJI} **No active downtime to extend**\n\n"
+                "Use `/downtime` to set a new downtime window.",
+                ephemeral=True,
+            )
+            return
+
+        tz_value = (self.tz_input.value or "").strip() or "UTC"
+        tz_resolved = resolve_timezone(tz_value)
+        tzinfo = get_tzinfo(tz_resolved, tz_fallback=tz_value)
+
+        if not tzinfo:
+            await interaction.response.send_message(
+                f"{HEART_EMOJI} **Invalid timezone**\n\n"
+                "**Common timezones:**\n"
+                "• `EST`, `CST`, `MST`, `PST`\n"
+                "• `UTC`, `America/New_York`\n"
+                "• `GMT-05:00` (offset format)\n\n"
+                f"**Your input:** `{tz_value}`",
+                ephemeral=True,
+            )
+            return
+
+        new_end_str = self.new_end_input.value.strip()
+
+        # Check if it's a relative duration (starts with +)
+        if new_end_str.startswith('+'):
+            duration_str = new_end_str[1:].strip()  # Remove the +
+            duration_minutes = parse_duration_minutes(duration_str)
+
+            if duration_minutes is None:
+                await interaction.response.send_message(
+                    f"{HEART_EMOJI} **Invalid duration format**\n\n"
+                    "**Examples:**\n"
+                    "• `+2h` (add 2 hours)\n"
+                    "• `+1h30m` (add 1.5 hours)\n"
+                    "• `+30m` (add 30 minutes)\n\n"
+                    f"**Your input:** `{new_end_str}`",
+                    ephemeral=True,
+                )
+                return
+
+            # Add duration to current end time
+            current_end_dt = datetime.fromtimestamp(downtime["end"], tz=timezone.utc)
+            new_end_dt = current_end_dt + timedelta(minutes=duration_minutes)
+            new_end_local = new_end_dt.astimezone(tzinfo)
+        else:
+            # Parse as absolute time
+            new_end_local, new_end_dt, _ = parse_time_info(new_end_str, tzinfo)
+
+            if not new_end_dt:
+                await interaction.response.send_message(
+                    f"{HEART_EMOJI} **Invalid time format**\n\n"
+                    "**Examples:**\n"
+                    "• `2/1/2026 6:00 PM` (absolute time)\n"
+                    "• `2/1/26 6pm` (short format)\n"
+                    "• `+2h` (add 2 hours to current end)\n\n"
+                    f"**Your input:** `{new_end_str}`",
+                    ephemeral=True,
+                )
+                return
+
+        # Validate new end time is after start time
+        start_dt = datetime.fromtimestamp(downtime["start"], tz=timezone.utc)
+        if new_end_dt <= start_dt:
+            await interaction.response.send_message(
+                f"{HEART_EMOJI} **New end time must be after start time**\n\n"
+                f"Start: <t:{downtime['start']}:f>\n"
+                f"New End: <t:{int(new_end_dt.timestamp())}:f>\n\n"
+                "Please check your time and try again.",
+                ephemeral=True
+            )
+            return
+
+        # Update downtime
+        old_end = downtime["end"]
+        downtime["end"] = int(new_end_dt.timestamp())
+        save_data()
+        await update_panels(interaction.guild_id)
+
+        await interaction.response.send_message(
+            f"{HEART_EMOJI} **Downtime extended!**\n\n"
+            f"Previous End: <t:{old_end}:f>\n"
+            f"New End: <t:{downtime['end']}:f>\n"
+            f"(Entered in {tz_resolved})",
+            ephemeral=True,
+        )
+
+        # Log successful extension
+        print(f"✓ Downtime extended by {interaction.user} in {interaction.guild}: "
+              f"New end: {new_end_local} ({tz_resolved})")
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        """Handle errors that occur during modal submission."""
+        import traceback
+
+        # Log the full error to console for debugging
+        print(f"\n{'='*60}")
+        print(f"ERROR in ExtendDowntimeModal submission:")
+        print(f"User: {interaction.user} ({interaction.user.id})")
+        print(f"Guild: {interaction.guild} ({interaction.guild_id})")
+        print(f"Error Type: {type(error).__name__}")
+        print(f"Error Message: {str(error)}")
+        print(f"Traceback:")
+        traceback.print_exception(type(error), error, error.__traceback__)
+        print(f"{'='*60}\n")
+
+        # Send user-friendly error message
+        error_msg = (
+            f"{HEART_EMOJI} **Oops! Something went wrong.**\n\n"
+            f"**Error:** {str(error)}\n\n"
+            f"**Tips:**\n"
+            f"• Absolute time: `2/1/2026 6:00 PM`\n"
+            f"• Add duration: `+2h` or `+1h30m`\n\n"
+            f"If this error persists, please contact an administrator."
+        )
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(error_msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(error_msg, ephemeral=True)
+        except Exception as send_error:
+            print(f"Failed to send error message to user: {send_error}")
+
 # ============ BUTTON VIEW ============
 class StatusPanel(ui.View):
     def __init__(self):
@@ -847,30 +1002,10 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 
 # ============ MOD COMMANDS ============
-@tree.command(name="setdowntime", description="[MOD] Set a maintenance window")
-@app_commands.describe(
-    start="Start time (HH:MM, HH:MM AM, MM/DD HH:MM, MM/DD/YYYY HH:MM, or YYYY-MM-DD HH:MM)",
-    end="End time (same formats)",
-    tz="Timezone (autocomplete or GMT offset like GMT-05:00)",
-    title="Optional custom title"
-)
-@app_commands.autocomplete(tz=tz_autocomplete)
+@tree.command(name="downtime", description="[MOD] Set downtime using a mobile-friendly form")
 @app_commands.check(require_allowed_guild)
 @app_commands.check(require_downtime_role)
-async def setdowntime(
-    interaction: discord.Interaction,
-    start: str,
-    end: str,
-    tz: Optional[str] = "UTC",
-    title: str = "Scheduled Maintenance",
-):
-    await apply_downtime(interaction, start, end, tz or "UTC", title, interaction.guild_id)
-
-
-@tree.command(name="setdowntimemodal", description="[MOD] Set downtime using a mobile-friendly form")
-@app_commands.check(require_allowed_guild)
-@app_commands.check(require_downtime_role)
-async def setdowntimemodal(interaction: discord.Interaction):
+async def downtime(interaction: discord.Interaction):
     """Open a modal form for mobile-friendly downtime entry."""
     modal = DowntimeModal()
     await interaction.response.send_modal(modal)
@@ -903,10 +1038,19 @@ async def cleardowntime(interaction: discord.Interaction):
     await interaction.response.send_message("Downtime cleared.", ephemeral=True)
 
 
-# ============ PUBLIC COMMAND ============
-@tree.command(name="status", description="Check server status (only you can see)")
+@tree.command(name="extenddowntime", description="[MOD] Extend the downtime end time")
+@app_commands.check(require_allowed_guild)
+@app_commands.check(require_downtime_role)
+async def extenddowntime(interaction: discord.Interaction):
+    """Extend the current downtime by changing the end time."""
+    modal = ExtendDowntimeModal()
+    await interaction.response.send_modal(modal)
+
+
+@tree.command(name="status", description="Check server status")
 @app_commands.check(require_allowed_guild)
 async def status(interaction: discord.Interaction):
+    """Check the current server status."""
     if not interaction.guild_id:
         await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
         return
