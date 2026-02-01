@@ -601,321 +601,6 @@ def parse_duration_minutes(raw: str) -> Optional[int]:
     return total
 
 
-# ============ Modal Class ============
-class DowntimeModal(ui.Modal, title="Set Downtime"):
-    def __init__(self):
-        super().__init__()
-
-    start_input = ui.TextInput(
-        label="Start Time",
-        placeholder="2/1/26 2:30 PM  or  2/1/2026 2:30 PM  or  4pm",
-        required=True,
-        max_length=50
-    )
-
-    end_input = ui.TextInput(
-        label="End Time OR Duration",
-        placeholder="2/1/26 4:00 PM  or  2h30m  (h=hours, m=minutes)",
-        required=True,
-        max_length=50
-    )
-
-    tz_input = ui.TextInput(
-        label="Timezone (optional, defaults to UTC)",
-        placeholder="EST  or  America/New_York  or  GMT-05:00",
-        required=False,
-        max_length=50,
-        default="UTC"
-    )
-
-    title_input = ui.TextInput(
-        label="Downtime Title (optional)",
-        placeholder="Scheduled Maintenance",
-        required=False,
-        max_length=100,
-        default="Scheduled Maintenance"
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        tz_value = (self.tz_input.value or "").strip() or "UTC"
-        title_value = (self.title_input.value or "").strip() or "Scheduled Maintenance"
-
-        # Check if end time is a duration
-        duration_minutes = parse_duration_minutes(self.end_input.value)
-        if duration_minutes is not None:
-            # Need to parse start time first, then add duration
-            tz_resolved = resolve_timezone(tz_value)
-            tzinfo = get_tzinfo(tz_resolved, tz_fallback=tz_value)
-            if not tzinfo:
-                await interaction.response.send_message(
-                    f"{HEART_EMOJI} **Invalid timezone**\n\n"
-                    "**Common timezones:**\n"
-                    "• `EST`, `CST`, `MST`, `PST`\n"
-                    "• `UTC`, `America/New_York`\n"
-                    "• `GMT-05:00` (offset format)\n\n"
-                    f"**Your input:** `{tz_value}`",
-                    ephemeral=True,
-                )
-                return
-
-            start_local, start_dt, start_time_only = parse_time_info(self.start_input.value, tzinfo)
-            if not start_dt or not start_local:
-                await interaction.response.send_message(
-                    f"{HEART_EMOJI} **Invalid start time format**\n\n"
-                    "**Examples:**\n"
-                    "• `2/1/2026 2:30 PM`\n"
-                    "• `2/1/26 2:30 PM`\n"
-                    "• `2/1 2:30 PM`\n"
-                    "• `4pm`\n\n"
-                    f"**Your input:** `{self.start_input.value}`",
-                    ephemeral=True,
-                )
-                return
-
-            end_local = start_local + timedelta(minutes=duration_minutes)
-            end_dt = end_local.astimezone(timezone.utc)
-
-            # Validate end time is after start time
-            if end_dt <= start_dt:
-                await interaction.response.send_message(
-                    f"{HEART_EMOJI} **End time must be after start time**\n\n"
-                    f"Start: <t:{int(start_dt.timestamp())}:f>\n"
-                    f"End: <t:{int(end_dt.timestamp())}:f>\n\n"
-                    f"Duration entered: `{self.end_input.value}` ({duration_minutes} minutes)",
-                    ephemeral=True
-                )
-                return
-
-            # Apply downtime with calculated end time
-            if not interaction.guild_id:
-                await interaction.response.send_message(
-                    "This command can only be used in a server.",
-                    ephemeral=True,
-                )
-                return
-
-            downtime = get_downtime(interaction.guild_id)
-            downtime["start"] = int(start_dt.timestamp())
-            downtime["end"] = int(end_dt.timestamp())
-            downtime["title"] = title_value
-            save_data()
-            await update_panels(interaction.guild_id)
-
-            await interaction.response.send_message(
-                f"{HEART_EMOJI} Downtime set: {title_value}\n"
-                f"Start: <t:{downtime['start']}:f>\n"
-                f"End: <t:{downtime['end']}:f>\n"
-                f"(Entered in {tz_resolved})",
-                ephemeral=True,
-            )
-
-            # Log successful submission
-            print(f"✓ Downtime set via modal by {interaction.user} in {interaction.guild}: "
-                  f"{title_value} | {start_local} to {end_local} ({tz_resolved})")
-        else:
-            # Regular start/end time format
-            await apply_downtime(
-                interaction,
-                self.start_input.value,
-                self.end_input.value,
-                tz_value,
-                title_value,
-                interaction.guild_id,
-            )
-
-            # Log successful submission
-            print(f"✓ Downtime set via modal by {interaction.user} in {interaction.guild}: "
-                  f"{title_value} | {tz_resolved}")
-
-    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
-        """Handle errors that occur during modal submission."""
-        import traceback
-
-        # Log the full error to console for debugging
-        print(f"\n{'='*60}")
-        print(f"ERROR in DowntimeModal submission:")
-        print(f"User: {interaction.user} ({interaction.user.id})")
-        print(f"Guild: {interaction.guild} ({interaction.guild_id})")
-        print(f"Error Type: {type(error).__name__}")
-        print(f"Error Message: {str(error)}")
-        print(f"Traceback:")
-        traceback.print_exception(type(error), error, error.__traceback__)
-        print(f"{'='*60}\n")
-
-        # Send user-friendly error message
-        error_msg = (
-            f"{HEART_EMOJI} **Oops! Something went wrong.**\n\n"
-            f"**Error:** {str(error)}\n\n"
-            f"**Tips:**\n"
-            f"• Start time format: `MM/DD/YYYY HH:MM AM/PM` (e.g., `2/1/2026 2:30 PM`)\n"
-            f"• End time: Same format OR duration (e.g., `2h30m`)\n"
-            f"• Timezone: `EST`, `PST`, `UTC`, `America/New_York`, or `GMT-05:00`\n\n"
-            f"If this error persists, please contact an administrator."
-        )
-
-        try:
-            if interaction.response.is_done():
-                await interaction.followup.send(error_msg, ephemeral=True)
-            else:
-                await interaction.response.send_message(error_msg, ephemeral=True)
-        except Exception as send_error:
-            print(f"Failed to send error message to user: {send_error}")
-
-class ExtendDowntimeModal(ui.Modal, title="Extend Downtime"):
-    def __init__(self):
-        super().__init__()
-
-    new_end_input = ui.TextInput(
-        label="New End Time OR Additional Duration",
-        placeholder="2/1/26 6:00 PM  or  +2h  (to add 2 hours)",
-        required=True,
-        max_length=50
-    )
-
-    tz_input = ui.TextInput(
-        label="Timezone (optional, defaults to UTC)",
-        placeholder="EST  or  America/New_York  or  GMT-05:00",
-        required=False,
-        max_length=50,
-        default="UTC"
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if not interaction.guild_id:
-            await interaction.response.send_message(
-                "This command can only be used in a server.",
-                ephemeral=True,
-            )
-            return
-
-        # Get current downtime
-        downtime = get_downtime(interaction.guild_id)
-        if not downtime.get("start") or not downtime.get("end"):
-            await interaction.response.send_message(
-                f"{HEART_EMOJI} **No active downtime to extend**\n\n"
-                "Use `/downtime` to set a new downtime window.",
-                ephemeral=True,
-            )
-            return
-
-        tz_value = (self.tz_input.value or "").strip() or "UTC"
-        tz_resolved = resolve_timezone(tz_value)
-        tzinfo = get_tzinfo(tz_resolved, tz_fallback=tz_value)
-
-        if not tzinfo:
-            await interaction.response.send_message(
-                f"{HEART_EMOJI} **Invalid timezone**\n\n"
-                "**Common timezones:**\n"
-                "• `EST`, `CST`, `MST`, `PST`\n"
-                "• `UTC`, `America/New_York`\n"
-                "• `GMT-05:00` (offset format)\n\n"
-                f"**Your input:** `{tz_value}`",
-                ephemeral=True,
-            )
-            return
-
-        new_end_str = self.new_end_input.value.strip()
-
-        # Check if it's a relative duration (starts with +)
-        if new_end_str.startswith('+'):
-            duration_str = new_end_str[1:].strip()  # Remove the +
-            duration_minutes = parse_duration_minutes(duration_str)
-
-            if duration_minutes is None:
-                await interaction.response.send_message(
-                    f"{HEART_EMOJI} **Invalid duration format**\n\n"
-                    "**Examples:**\n"
-                    "• `+2h` (add 2 hours)\n"
-                    "• `+1h30m` (add 1.5 hours)\n"
-                    "• `+30m` (add 30 minutes)\n\n"
-                    f"**Your input:** `{new_end_str}`",
-                    ephemeral=True,
-                )
-                return
-
-            # Add duration to current end time
-            current_end_dt = datetime.fromtimestamp(downtime["end"], tz=timezone.utc)
-            new_end_dt = current_end_dt + timedelta(minutes=duration_minutes)
-            new_end_local = new_end_dt.astimezone(tzinfo)
-        else:
-            # Parse as absolute time
-            new_end_local, new_end_dt, _ = parse_time_info(new_end_str, tzinfo)
-
-            if not new_end_dt:
-                await interaction.response.send_message(
-                    f"{HEART_EMOJI} **Invalid time format**\n\n"
-                    "**Examples:**\n"
-                    "• `2/1/2026 6:00 PM` (absolute time)\n"
-                    "• `2/1/26 6pm` (short format)\n"
-                    "• `+2h` (add 2 hours to current end)\n\n"
-                    f"**Your input:** `{new_end_str}`",
-                    ephemeral=True,
-                )
-                return
-
-        # Validate new end time is after start time
-        start_dt = datetime.fromtimestamp(downtime["start"], tz=timezone.utc)
-        if new_end_dt <= start_dt:
-            await interaction.response.send_message(
-                f"{HEART_EMOJI} **New end time must be after start time**\n\n"
-                f"Start: <t:{downtime['start']}:f>\n"
-                f"New End: <t:{int(new_end_dt.timestamp())}:f>\n\n"
-                "Please check your time and try again.",
-                ephemeral=True
-            )
-            return
-
-        # Update downtime
-        old_end = downtime["end"]
-        downtime["end"] = int(new_end_dt.timestamp())
-        save_data()
-        await update_panels(interaction.guild_id)
-
-        await interaction.response.send_message(
-            f"{HEART_EMOJI} **Downtime extended!**\n\n"
-            f"Previous End: <t:{old_end}:f>\n"
-            f"New End: <t:{downtime['end']}:f>\n"
-            f"(Entered in {tz_resolved})",
-            ephemeral=True,
-        )
-
-        # Log successful extension
-        print(f"✓ Downtime extended by {interaction.user} in {interaction.guild}: "
-              f"New end: {new_end_local} ({tz_resolved})")
-
-    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
-        """Handle errors that occur during modal submission."""
-        import traceback
-
-        # Log the full error to console for debugging
-        print(f"\n{'='*60}")
-        print(f"ERROR in ExtendDowntimeModal submission:")
-        print(f"User: {interaction.user} ({interaction.user.id})")
-        print(f"Guild: {interaction.guild} ({interaction.guild_id})")
-        print(f"Error Type: {type(error).__name__}")
-        print(f"Error Message: {str(error)}")
-        print(f"Traceback:")
-        traceback.print_exception(type(error), error, error.__traceback__)
-        print(f"{'='*60}\n")
-
-        # Send user-friendly error message
-        error_msg = (
-            f"{HEART_EMOJI} **Oops! Something went wrong.**\n\n"
-            f"**Error:** {str(error)}\n\n"
-            f"**Tips:**\n"
-            f"• Absolute time: `2/1/2026 6:00 PM`\n"
-            f"• Add duration: `+2h` or `+1h30m`\n\n"
-            f"If this error persists, please contact an administrator."
-        )
-
-        try:
-            if interaction.response.is_done():
-                await interaction.followup.send(error_msg, ephemeral=True)
-            else:
-                await interaction.response.send_message(error_msg, ephemeral=True)
-        except Exception as send_error:
-            print(f"Failed to send error message to user: {send_error}")
-
 # ============ BUTTON VIEW ============
 class StatusPanel(ui.View):
     def __init__(self):
@@ -1002,13 +687,25 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 
 # ============ MOD COMMANDS ============
-@tree.command(name="downtime", description="[MOD] Set downtime using a mobile-friendly form")
+@tree.command(name="downtime", description="[MOD] Set a maintenance window")
+@app_commands.describe(
+    start="Start time (e.g., 2/1/26 2:30 PM or 4pm)",
+    end="End time (same formats)",
+    tz="Timezone (autocomplete)",
+    title="Optional custom title"
+)
+@app_commands.autocomplete(tz=tz_autocomplete)
 @app_commands.check(require_allowed_guild)
 @app_commands.check(require_downtime_role)
-async def downtime(interaction: discord.Interaction):
-    """Open a modal form for mobile-friendly downtime entry."""
-    modal = DowntimeModal()
-    await interaction.response.send_modal(modal)
+async def downtime(
+    interaction: discord.Interaction,
+    start: str,
+    end: str,
+    tz: Optional[str] = "UTC",
+    title: str = "Scheduled Maintenance",
+):
+    """Set downtime with inline parameters."""
+    await apply_downtime(interaction, start, end, tz or "UTC", title, interaction.guild_id)
 
 
 @tree.command(name="panel", description="[MOD] Post the status panel in this channel")
@@ -1039,12 +736,104 @@ async def cleardowntime(interaction: discord.Interaction):
 
 
 @tree.command(name="extenddowntime", description="[MOD] Extend the downtime end time")
+@app_commands.describe(
+    new_end="New end time (e.g., 2/1/26 6pm) OR +duration (e.g., +2h)",
+    tz="Timezone (autocomplete)"
+)
+@app_commands.autocomplete(tz=tz_autocomplete)
 @app_commands.check(require_allowed_guild)
 @app_commands.check(require_downtime_role)
-async def extenddowntime(interaction: discord.Interaction):
+async def extenddowntime(
+    interaction: discord.Interaction,
+    new_end: str,
+    tz: Optional[str] = "UTC"
+):
     """Extend the current downtime by changing the end time."""
-    modal = ExtendDowntimeModal()
-    await interaction.response.send_modal(modal)
+    if not interaction.guild_id:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    downtime = get_downtime(interaction.guild_id)
+    if not downtime.get("start") or not downtime.get("end"):
+        await interaction.response.send_message(
+            f"{HEART_EMOJI} **No active downtime to extend**\n\n"
+            "Use `/downtime` to set a new downtime window.",
+            ephemeral=True,
+        )
+        return
+
+    tz_resolved = resolve_timezone(tz or "UTC")
+    tzinfo = get_tzinfo(tz_resolved, tz_fallback=tz)
+
+    if not tzinfo:
+        await interaction.response.send_message(
+            f"{HEART_EMOJI} **Invalid timezone**\n\n"
+            "**Common timezones:**\n"
+            "• `EST`, `CST`, `MST`, `PST`\n"
+            "• `UTC`, `America/New_York`\n"
+            "• `GMT-05:00` (offset format)\n\n"
+            f"**Your input:** `{tz}`",
+            ephemeral=True,
+        )
+        return
+
+    new_end_str = new_end.strip()
+
+    # Check if it's a relative duration (starts with +)
+    if new_end_str.startswith('+'):
+        duration_str = new_end_str[1:].strip()
+        duration_minutes = parse_duration_minutes(duration_str)
+
+        if duration_minutes is None:
+            await interaction.response.send_message(
+                f"{HEART_EMOJI} **Invalid duration format**\n\n"
+                "**Examples:** `+2h`, `+1h30m`, `+30m`\n\n"
+                f"**Your input:** `{new_end_str}`",
+                ephemeral=True,
+            )
+            return
+
+        current_end_dt = datetime.fromtimestamp(downtime["end"], tz=timezone.utc)
+        new_end_dt = current_end_dt + timedelta(minutes=duration_minutes)
+    else:
+        # Parse as absolute time
+        _, new_end_dt, _ = parse_time_info(new_end_str, tzinfo)
+
+        if not new_end_dt:
+            await interaction.response.send_message(
+                f"{HEART_EMOJI} **Invalid time format**\n\n"
+                "**Examples:** `2/1/2026 6pm`, `2/1/26 6:00 PM`, `+2h`\n\n"
+                f"**Your input:** `{new_end_str}`",
+                ephemeral=True,
+            )
+            return
+
+    # Validate new end time is after start time
+    start_dt = datetime.fromtimestamp(downtime["start"], tz=timezone.utc)
+    if new_end_dt <= start_dt:
+        await interaction.response.send_message(
+            f"{HEART_EMOJI} **New end time must be after start time**\n\n"
+            f"Start: <t:{downtime['start']}:f>\n"
+            f"New End: <t:{int(new_end_dt.timestamp())}:f>",
+            ephemeral=True
+        )
+        return
+
+    # Update downtime
+    old_end = downtime["end"]
+    downtime["end"] = int(new_end_dt.timestamp())
+    save_data()
+    await update_panels(interaction.guild_id)
+
+    await interaction.response.send_message(
+        f"{HEART_EMOJI} **Downtime extended!**\n\n"
+        f"Previous End: <t:{old_end}:f>\n"
+        f"New End: <t:{downtime['end']}:f>",
+        ephemeral=True,
+    )
+
+    print(f"✓ Downtime extended by {interaction.user} in {interaction.guild}: "
+          f"New end: <t:{downtime['end']}:f> ({tz_resolved})")
 
 
 @tree.command(name="status", description="Check server status")
