@@ -141,6 +141,28 @@ def require_allowed_guild(interaction: discord.Interaction) -> bool:
     return True
 
 
+def get_bot_member(guild: discord.Guild) -> Optional[discord.Member]:
+    if not client.user:
+        return None
+    return guild.get_member(client.user.id)
+
+
+def missing_channel_perms(
+    channel: discord.abc.GuildChannel, member: discord.Member
+) -> list[str]:
+    perms = channel.permissions_for(member)
+    missing = []
+    if not perms.view_channel:
+        missing.append("View Channel")
+    if not perms.send_messages:
+        missing.append("Send Messages")
+    if not perms.read_message_history:
+        missing.append("Read Message History")
+    if isinstance(channel, discord.Thread) and not perms.send_messages_in_threads:
+        missing.append("Send Messages in Threads")
+    return missing
+
+
 DOWNTIME_ROLE_NAME = "downtime"
 
 
@@ -650,6 +672,24 @@ async def setdowntime(
 async def setdowntimechat(interaction: discord.Interaction):
     if not interaction.guild or not interaction.guild_id or not interaction.channel:
         await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    bot_member = get_bot_member(interaction.guild)
+    if not bot_member:
+        await interaction.response.send_message("Bot member not found. Try again in a moment.", ephemeral=True)
+        return
+
+    if not isinstance(interaction.channel, discord.abc.GuildChannel):
+        await interaction.response.send_message("Please run this in a server text channel.", ephemeral=True)
+        return
+
+    missing = missing_channel_perms(interaction.channel, bot_member)
+    if missing:
+        await interaction.response.send_message(
+            "I can't run the chat setup here. Missing permissions: "
+            + ", ".join(missing),
+            ephemeral=True,
+        )
         return
 
     await interaction.response.send_message(
