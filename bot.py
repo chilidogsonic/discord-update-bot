@@ -309,7 +309,14 @@ def get_tzinfo(
 
 def normalize_time_input(time_str: str) -> str:
     """Normalize whitespace and AM/PM spacing."""
-    cleaned = " ".join(time_str.strip().split())
+    cleaned = time_str.strip()
+    # Normalize common unicode spaces to regular space
+    cleaned = cleaned.replace("\u00A0", " ").replace("\u202F", " ").replace("\u2009", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    # Replace dot time separators (e.g., 2.15 PM -> 2:15 PM)
+    cleaned = cleaned.replace(".", ":")
+    # If date and time are separated by a colon, normalize to space (e.g., 2/12:2:15 PM)
+    cleaned = re.sub(r"^(\d{1,2}/\d{1,2})\s*[:\-]\s*", r"\1 ", cleaned)
     if cleaned.upper().endswith(("AM", "PM")) and " " not in cleaned[-3:]:
         # Convert 9:48AM -> 9:48 AM
         cleaned = cleaned[:-2] + " " + cleaned[-2:]
@@ -323,12 +330,16 @@ def parse_time_info(
     formats = [
         "%Y-%m-%d %H:%M",
         "%Y-%m-%d %I:%M %p",
+        "%Y-%m-%d %I %p",
         "%m/%d %H:%M",
         "%m/%d %I:%M %p",
+        "%m/%d %I %p",
         "%m/%d/%Y %H:%M",
         "%m/%d/%Y %I:%M %p",
+        "%m/%d/%Y %I %p",
         "%H:%M",
         "%I:%M %p",
+        "%I %p",
     ]
     
     now_local = datetime.now(tzinfo)
@@ -729,7 +740,7 @@ async def setdowntimechat(interaction: discord.Interaction):
 
     # Step 2: start time (optional)
     while True:
-        prompt = "Start time? (e.g., 9:00 PM, 2/15 9:00 PM) or `skip` for now."
+        prompt = "Start time? (e.g., 9:00 PM, 2 PM, 2/15 2:15 PM) or `skip` for now."
         status, value = await prompt_user_message(channel, user, prompt)
         if status == "timeout":
             await channel.send(f"{user.mention} Setup timed out.")
@@ -749,7 +760,7 @@ async def setdowntimechat(interaction: discord.Interaction):
 
     # Step 3: end time OR duration
     while True:
-        prompt = "End time or duration? (e.g., 11:00 PM OR 2h30m)"
+        prompt = "End time or duration? (e.g., 11:00 PM, 2/15 11 PM OR 2h30m)"
         status, value = await prompt_user_message(channel, user, prompt)
         if status == "timeout":
             await channel.send(f"{user.mention} Setup timed out.")
