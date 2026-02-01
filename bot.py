@@ -652,11 +652,117 @@ async def prompt_user_message(
     return "value", content
 
 
+# ============ MOdal Classes ============
+class DowntimeModal(ui.Modal, title="Set Downtime"):
+    def __init__(self):
+        super().__init__()
+
+    start_input = ui.TextInput(
+        label="Start Time (Format: MM/DD/YYYY HH:MM AM/PM)",
+        placeholder="e.g., 02/01/2026 2:30 PM",
+        required=True,
+        max_length=50
+    )
+
+    end_input = ui.TextInput(
+        label="End Time (Format: MM/DD/YYYY HH:MM AM/PM or duration like 2h30m)",
+        placeholder="e.g., 02/01/2026 4:00 PM or 1h30m",
+        required=True,
+        max_length=50
+    )
+
+    tz_input = ui.TextInput(
+        label="Timezone",
+        placeholder="e.g., EST, America/New_York, GMT-05:00",
+        required=False,
+        max_length=50,
+        default="UTC"
+    )
+
+    title_input = ui.TextInput(
+        label="Downtime Title",
+        placeholder="e.g., Scheduled Maintenance",
+        required=False,
+        max_length=100,
+        default="Scheduled Maintenance"
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        tz_value = (self.tz_input.value or "").strip() or "UTC"
+        title_value = (self.title_input.value or "").strip() or "Scheduled Maintenance"
+
+        # Check if end time is a duration
+        duration_minutes = parse_duration_minutes(self.end_input.value)
+        if duration_minutes is not None:
+            # Need to parse start time first, then add duration
+            tz_resolved = resolve_timezone(tz_value)
+            tzinfo = get_tzinfo(tz_resolved, tz_fallback=tz_value)
+            if not tzinfo:
+                await interaction.response.send_message(
+                    "Invalid timezone.\n"
+                    "Examples: `EST`, `PST`, `UTC`, `America/New_York`\n"
+                    "Or use GMT offsets like `GMT -05:00` / `GMT+05:30`.\n"
+                    "Reference: https://greenwichmeantime.com/current-time/\n"
+                    "Note: On Windows, install `tzdata` (pip install tzdata) for full IANA support.",
+                    ephemeral=True,
+                )
+                return
+
+            start_local, start_dt, start_time_only = parse_time_info(self.start_input.value, tzinfo)
+            if not start_dt or not start_local:
+                await interaction.response.send_message(
+                    "Invalid start time format.\n"
+                    "Format: `MM/DD/YYYY HH:MM AM/PM` (e.g., `02/01/2026 2:30 PM`)",
+                    ephemeral=True,
+                )
+                return
+
+            end_local = start_local + timedelta(minutes=duration_minutes)
+            end_dt = end_local.astimezone(timezone.utc)
+
+            # Validate end time is after start time
+            if end_dt <= start_dt:
+                await interaction.response.send_message("End time must be after start time.", ephemeral=True)
+                return
+
+            # Apply downtime with calculated end time
+            if not interaction.guild_id:
+                await interaction.response.send_message(
+                    "This command can only be used in a server.",
+                    ephemeral=True,
+                )
+                return
+
+            downtime = get_downtime(interaction.guild_id)
+            downtime["start"] = int(start_dt.timestamp())
+            downtime["end"] = int(end_dt.timestamp())
+            downtime["title"] = title_value
+            save_data()
+            await update_panels(interaction.guild_id)
+
+            await interaction.response.send_message(
+                f"{HEART_EMOJI} Downtime set: {title_value}\n"
+                f"Start: <t:{downtime['start']}:f>\n"
+                f"End: <t:{downtime['end']}:f>\n"
+                f"(Entered in {tz_resolved})",
+                ephemeral=True,
+            )
+        else:
+            # Regular start/end time format
+            await apply_downtime(
+                interaction,
+                self.start_input.value,
+                self.end_input.value,
+                tz_value,
+                title_value,
+                interaction.guild_id,
+            )
+
 # ============ BUTTON VIEW ============
 class StatusPanel(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-    
+
     @ui.button(label=BUTTON_LABEL, style=discord.ButtonStyle.primary, emoji=HEART_EMOJI, custom_id="check_status")
     async def check_status(self, interaction: discord.Interaction, button: ui.Button):
         if ALLOWED_GUILD_IDS and interaction.guild_id not in ALLOWED_GUILD_IDS:
@@ -667,19 +773,6 @@ class StatusPanel(ui.View):
             return
         embed = get_status_embed(interaction.guild_id, full=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-    async def on_submit(self, interaction: discord.Interaction):
-        tz_value = (self.tz_input.value or "").strip() or "UTC"
-        title_value = (self.title_input.value or "").strip() or "Scheduled Maintenance"
-        await apply_downtime(
-            interaction,
-            self.start_input.value,
-            self.end_input.value,
-            tz_value,
-            title_value,
-            interaction.guild_id,
-        )
 
 
 
@@ -755,149 +848,23 @@ async def setdowntime(
 ):
     await apply_downtime(interaction, start, end, tz or "UTC", title, interaction.guild_id)
 
-@tree.command(name="setdowntimechat", description="[MOD] Guided setup in chat")
+@tree.command(name="setdowntimechat", description="[MOD] Guided setup in chat (DEPRECATED - use /setdowntimemodal instead)")
 @app_commands.check(require_allowed_guild)
 @app_commands.check(require_downtime_role)
 async def setdowntimechat(interaction: discord.Interaction):
-    if not interaction.guild or not interaction.guild_id or not interaction.channel:
-        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
-        return
-
-    bot_member = get_bot_member(interaction.guild)
-    if not bot_member:
-        await interaction.response.send_message("Bot member not found. Try again in a moment.", ephemeral=True)
-        return
-
-    if not isinstance(interaction.channel, discord.abc.GuildChannel):
-        await interaction.response.send_message("Please run this in a server text channel.", ephemeral=True)
-        return
-
-    missing = missing_channel_perms(interaction.channel, bot_member)
-    if missing:
-        await interaction.response.send_message(
-            "I can't run the chat setup here. Missing permissions: "
-            + ", ".join(missing),
-            ephemeral=True,
-        )
-        return
-
     await interaction.response.send_message(
-        "Downtime setup started. Reply in this channel. Type `skip` to keep defaults or `cancel` to abort.",
-        ephemeral=False,
-    )
-
-    channel = interaction.channel
-    user = interaction.user
-
-    # Step 1: timezone
-    tz_resolved = "UTC"
-    while True:
-        prompt = (
-            "Timezone? (e.g., America/New_York, EST). You can also use GMT offsets like "
-            "`GMT -05:00` or `GMT+05:30`. Reference: https://greenwichmeantime.com/current-time/ "
-            "Reply `skip` for UTC."
-        )
-        status, value = await prompt_user_message(channel, user, prompt)
-        if status == "timeout":
-            await channel.send(f"{user.mention} Setup timed out.")
-            return
-        if status == "cancel":
-            await channel.send(f"{user.mention} Setup cancelled.")
-            return
-        if status == "skip":
-            tz_resolved = "UTC"
-            break
-        tz_candidate = resolve_timezone(value)
-        tzinfo = get_tzinfo(tz_candidate, tz_fallback=value)
-        if not tzinfo:
-            await channel.send(f"{user.mention} Invalid timezone. Try again.")
-            continue
-        tz_resolved = tz_candidate
-        break
-
-    tzinfo = get_tzinfo(tz_resolved, tz_fallback=tz_resolved)
-    if not tzinfo:
-        await channel.send(f"{user.mention} Invalid timezone. Aborting.")
-        return
-
-    # Step 2: start time (strict format)
-    while True:
-        prompt = "Start time? Format: `M/D H:MM AM/PM` (e.g., `2/1 2:30 PM`) or `skip` for now."
-        status, value = await prompt_user_message(channel, user, prompt)
-        if status == "timeout":
-            await channel.send(f"{user.mention} Setup timed out.")
-            return
-        if status == "cancel":
-            await channel.send(f"{user.mention} Setup cancelled.")
-            return
-        if status == "skip":
-            start_local = datetime.now(tzinfo)
-            start_dt = start_local.astimezone(timezone.utc)
-            break
-        start_local, start_dt = parse_strict_mmdd_time(value, tzinfo)
-        if not start_dt or not start_local:
-            await channel.send(f"{user.mention} Invalid start time. Use `M/D H:MM AM/PM`.")
-            continue
-        break
-
-    # Step 3: end time OR duration
-    while True:
-        prompt = "End time or duration? Use `M/D H:MM AM/PM` (e.g., `2/1 11:00 PM`) or `2h30m`"
-        status, value = await prompt_user_message(channel, user, prompt)
-        if status == "timeout":
-            await channel.send(f"{user.mention} Setup timed out.")
-            return
-        if status == "cancel":
-            await channel.send(f"{user.mention} Setup cancelled.")
-            return
-        if status in {"skip", "none"}:
-            await channel.send(f"{user.mention} Please provide an end time or duration.")
-            continue
-
-        duration_minutes = parse_duration_minutes(value)
-        if duration_minutes is not None:
-            end_local = start_local + timedelta(minutes=duration_minutes)
-            end_dt = end_local.astimezone(timezone.utc)
-            break
-
-        end_local, end_dt = parse_strict_mmdd_time(value, tzinfo)
-        if not end_dt or not end_local:
-            await channel.send(f"{user.mention} Invalid end time. Use `M/D H:MM AM/PM` or a duration like `2h30m`.")
-            continue
-        break
-
-    if end_dt <= start_dt:
-        await channel.send(f"{user.mention} End time must be after start time.")
-        return
-
-    # Step 4: title (optional)
-    title_value = "Scheduled Maintenance"
-    prompt = "Title? (optional - `skip` for default)"
-    status, value = await prompt_user_message(channel, user, prompt)
-    if status == "timeout":
-        await channel.send(f"{user.mention} Setup timed out.")
-        return
-    if status == "cancel":
-        await channel.send(f"{user.mention} Setup cancelled.")
-        return
-    if status == "value" and value.strip():
-        title_value = value.strip()
-
-    downtime = get_downtime(interaction.guild_id)
-    downtime["start"] = int(start_dt.timestamp())
-    downtime["end"] = int(end_dt.timestamp())
-    downtime["title"] = title_value
-    save_data()
-    await update_panels(interaction.guild_id)
-
-    await channel.send(
-        f"{user.mention} Downtime set: {title_value}\n"
-        f"Start: <t:{downtime['start']}:f>\n"
-        f"End: <t:{downtime['end']}:f>\n"
-        f"Times shown in your local timezone."
+        "This command is deprecated. Please use `/setdowntimemodal` instead for a mobile-friendly experience!",
+        ephemeral=True
     )
 
 
+@tree.command(name="setdowntimemodal", description="[MOD] Set downtime using a mobile-friendly form")
+@app_commands.check(require_allowed_guild)
+@app_commands.check(require_downtime_role)
+async def setdowntimemodal(interaction: discord.Interaction):
+    """Open a modal form for mobile-friendly downtime entry."""
+    modal = DowntimeModal()
+    await interaction.response.send_modal(modal)
 
 
 @tree.command(name="panel", description="[MOD] Post the status panel in this channel")
