@@ -579,23 +579,47 @@ def parse_strict_mmdd_time(
     Strict format: M/D H:MM AM/PM (e.g., 2/1 2:30 PM).
     Returns (local_dt, utc_dt) or (None, None).
     """
-    cleaned = normalize_time_input(raw)
+    # Handle potential invisible Unicode characters that might interfere with parsing
+    # Remove zero-width characters and other problematic Unicode
+    cleaned = raw.strip()
+    # Remove common zero-width Unicode characters
+    cleaned = re.sub(r'[\u200B-\u200D\uFEFF]', '', cleaned)
+
+    # Apply normalization
+    cleaned = normalize_time_input(cleaned)
+
+    # Helpful debug in logs when parsing fails
+    if os.getenv("DEBUG_TIME_PARSE", "").strip() == "1":
+        print(f"Strict time parse: raw={raw!r} normalized={cleaned!r}")
+
+    # More flexible pattern to handle potential spacing issues
     match = re.fullmatch(r"(\d{1,2})/(\d{1,2})\s+(\d{1,2}):(\d{2})\s*([AP]M)", cleaned, re.IGNORECASE)
     if not match:
+        if os.getenv("DEBUG_TIME_PARSE", "").strip() == "1":
+            print(f"Strict time parse failed: pattern didn't match")
         return None, None
+
     month = int(match.group(1))
     day = int(match.group(2))
     hour = int(match.group(3))
     minute = int(match.group(4))
     ampm = match.group(5).upper()
+
     if not (1 <= month <= 12 and 1 <= day <= 31 and 1 <= hour <= 12 and 0 <= minute <= 59):
+        if os.getenv("DEBUG_TIME_PARSE", "").strip() == "1":
+            print(f"Strict time parse failed: invalid values - month={month}, day={day}, hour={hour}, minute={minute}")
         return None, None
+
     hour24 = hour % 12 + (12 if ampm == "PM" else 0)
     year = datetime.now(tzinfo).year
+
     try:
         local_dt = datetime(year, month, day, hour24, minute, tzinfo=tzinfo)
-    except ValueError:
+    except ValueError as e:
+        if os.getenv("DEBUG_TIME_PARSE", "").strip() == "1":
+            print(f"Strict time parse failed: ValueError - {e}")
         return None, None
+
     return local_dt, local_dt.astimezone(timezone.utc)
 
 
