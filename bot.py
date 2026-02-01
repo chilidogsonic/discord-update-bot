@@ -297,6 +297,17 @@ def get_tzinfo(
     tz_name: str, tz_fallback: Optional[str] = None
 ) -> Optional[Union[timezone, ZoneInfo]]:
     """Resolve a timezone name to tzinfo, with fallback to fixed offsets for abbreviations."""
+    # Accept GMT/UTC offsets like "GMT-05:00" or "UTC +05:30"
+    for raw in (tz_name, tz_fallback or ""):
+        raw = (raw or "").strip().upper()
+        match = re.fullmatch(r"(GMT|UTC)\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?$", raw)
+        if match:
+            sign = -1 if match.group(2) == "-" else 1
+            hours = int(match.group(3))
+            minutes = int(match.group(4) or 0)
+            if 0 <= hours <= 23 and 0 <= minutes <= 59:
+                offset = timedelta(hours=hours, minutes=minutes) * sign
+                return timezone(offset)
     try:
         return ZoneInfo(tz_name)
     except Exception:
@@ -383,6 +394,8 @@ async def apply_downtime(
         await interaction.response.send_message(
             "Invalid timezone.\n"
             "Examples: `EST`, `PST`, `UTC`, `America/New_York`\n"
+            "Or use GMT offsets like `GMT -05:00` / `GMT+05:30`.\n"
+            "Reference: https://greenwichmeantime.com/current-time/\n"
             "Note: On Windows, install `tzdata` (pip install tzdata) for full IANA support.",
             ephemeral=True,
         )
@@ -662,7 +675,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 @app_commands.describe(
     start="Start time (HH:MM, HH:MM AM, MM/DD HH:MM, MM/DD/YYYY HH:MM, or YYYY-MM-DD HH:MM)",
     end="End time (same formats)",
-    tz="Timezone (autocomplete)",
+    tz="Timezone (autocomplete or GMT offset like GMT-05:00)",
     title="Optional custom title"
 )
 @app_commands.autocomplete(tz=tz_autocomplete)
@@ -714,7 +727,11 @@ async def setdowntimechat(interaction: discord.Interaction):
     # Step 1: timezone
     tz_resolved = "UTC"
     while True:
-        prompt = "Timezone? (e.g., America/New_York, EST). Reply `skip` for UTC."
+        prompt = (
+            "Timezone? (e.g., America/New_York, EST). You can also use GMT offsets like "
+            "`GMT -05:00` or `GMT+05:30`. Reference: https://greenwichmeantime.com/current-time/ "
+            "Reply `skip` for UTC."
+        )
         status, value = await prompt_user_message(channel, user, prompt)
         if status == "timeout":
             await channel.send(f"{user.mention} Setup timed out.")
