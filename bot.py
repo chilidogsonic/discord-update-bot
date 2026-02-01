@@ -323,13 +323,24 @@ def normalize_time_input(time_str: str) -> str:
     cleaned = time_str.strip()
     # Normalize common unicode spaces to regular space
     cleaned = cleaned.replace("\u00A0", " ").replace("\u202F", " ").replace("\u2009", " ")
+    # Normalize common unicode punctuation
+    cleaned = cleaned.translate(
+        {
+            ord("／"): "/",
+            ord("∕"): "/",
+            ord("⁄"): "/",
+            ord("："): ":",
+        }
+    )
+    cleaned = cleaned.replace(",", "")
     cleaned = re.sub(r"\s+", " ", cleaned)
     # Replace dot time separators (e.g., 2.15 PM -> 2:15 PM)
     cleaned = cleaned.replace(".", ":")
-    # If date and time are separated by a colon, normalize to space (e.g., 2/12:2:15 PM)
-    cleaned = re.sub(r"^(\d{1,2}/\d{1,2})\s*[:\-]\s*", r"\1 ", cleaned)
+    # If date and time are separated by a colon or dash, normalize to space (e.g., 2/12:2:15 PM)
+    cleaned = re.sub(r"^(\d{1,2}[/-]\d{1,2})\s*[:\-]\s*", r"\1 ", cleaned)
+    # Ensure space before AM/PM if missing (e.g., 9:48PM -> 9:48 PM)
+    cleaned = re.sub(r"(?i)(\d)(am|pm)$", r"\1 \2", cleaned)
     if cleaned.upper().endswith(("AM", "PM")) and " " not in cleaned[-3:]:
-        # Convert 9:48AM -> 9:48 AM
         cleaned = cleaned[:-2] + " " + cleaned[-2:]
     return cleaned
 
@@ -371,6 +382,9 @@ def parse_time_info(
             return parsed, parsed.astimezone(timezone.utc), time_only
         except ValueError:
             continue
+    # Helpful debug in logs when parsing fails
+    if os.getenv("DEBUG_TIME_PARSE", "").strip() == "1":
+        print(f"Time parse failed: raw={time_str!r} normalized={normalized!r}")
     return None, None, False
 
 
