@@ -5,7 +5,8 @@
       "Bash(python -m py_compile:*)",
       "Bash(git commit:*)",
       "Bash(dir:*)",
-      "Bash(git check-ignore:*)"
+      "Bash(git check-ignore:*)",
+      "WebFetch(domain:infinity-nikki.fandom.com)"
     ]
   }
 }
