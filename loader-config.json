@@ -1,0 +1,20 @@
+{
+    "bots": [
+        {
+            "name": "Downtime Notice Bot",
+            "dir": "downtime",
+            "start_file": "bot.py",
+            "type": "python3.11",
+            "auto_restart": true,
+            "max_retries": 3
+        },
+        {
+            "name": "Event Timers Bot",
+            "dir": "event_timers",
+            "start_file": "bot.py",
+            "type": "python3.11",
+            "auto_restart": true,
+            "max_retries": 3
+        }
+    ]
+}
