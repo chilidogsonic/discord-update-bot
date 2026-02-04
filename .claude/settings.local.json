@@ -10,7 +10,8 @@
       "WebFetch(domain:help.pebblehost.com)",
       "Bash(git push)",
       "Bash(git rm:*)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "WebFetch(domain:infinitynikki.infoldgames.com)"
     ]
   }
 }

@@ -961,6 +961,104 @@ def get_all_events_embed(event_type_filter: Optional[str] = None) -> discord.Emb
     return embed
 
 
+def get_overview_embed() -> discord.Embed:
+    """Build compact overview embed showing all events grouped by category."""
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    all_events = [e for e in EVENTS if e["end"] > now_ts]
+
+    if not all_events:
+        embed = discord.Embed(
+            title="📅 Event Overview",
+            description="No active or upcoming events at this time.\n\nCheck back later!",
+            color=discord.Color.blurple()
+        )
+        embed.set_footer(text="Infinity Nikki - Event Calendar")
+        return embed
+
+    # Group events into categories
+    resonance_events = [e for e in all_events if e["type"] == "resonance"]
+    limited_events = [e for e in all_events if e["type"] in ["task", "quest", "checkin", "doublerewards"]]
+    store_recurring = [e for e in all_events if e["type"] in ["store", "recurring"]]
+
+    # Helper to format compact event line
+    def format_compact_event(event: dict) -> str:
+        config = EVENT_TYPE_CONFIG.get(event["type"], {"emoji": "📌"})
+        emoji = config["emoji"]
+        name = event["name"]
+
+        # Extract short description from the description field
+        desc = event.get("description", "")
+
+        # For specific event types, extract key info
+        if event["type"] == "resonance":
+            # Extract outfit name from description (e.g., "5★ outfit Where Wanxiang Weaves Life")
+            if "5★ outfit " in desc:
+                outfit = desc.split("5★ outfit ")[1].split(",")[0]
+                return f"{emoji} {name} - 5★ {outfit}"
+        elif event["type"] == "task":
+            # Extract outfit from description
+            if "4★ outfit " in desc:
+                outfit = desc.split("4★ outfit ")[1].split("\n")[0]
+                return f"{emoji} {name} (Task) - 4★ {outfit}"
+        elif event["type"] == "quest":
+            # Simple format for collection events
+            return f"{emoji} {name} (Collection) - Diamonds + Card"
+        elif event["type"] == "checkin":
+            # Extract reward amount
+            rewards = event.get("rewards", "")
+            return f"{emoji} {name} (Check-in) - {rewards}"
+        elif event["type"] == "doublerewards":
+            # Short description
+            return f"{emoji} {name} (Double Rewards) - Weekly double realm rewards"
+        elif event["type"] == "store":
+            # Battle Pass
+            return f"{emoji} {name.replace(' (Battle Pass)', '')} - Battle Pass (Level 90 rewards)"
+        elif event["type"] == "recurring":
+            # Extract time info from description
+            if "Daily reset" in desc:
+                return f"{emoji} {name} - 04:00 server time"
+            elif "Weekly reset" in desc:
+                return f"{emoji} {name} - Monday 04:00 server time"
+
+        # Fallback
+        return f"{emoji} {name} - {desc[:50]}"
+
+    # Build description sections
+    sections = []
+
+    if resonance_events:
+        count = len(resonance_events)
+        lines = [f"**Resonance Events ({count})**"]
+        for event in sorted(resonance_events, key=lambda x: x["start"]):
+            lines.append(format_compact_event(event))
+        sections.append("\n".join(lines))
+
+    if limited_events:
+        count = len(limited_events)
+        lines = [f"**Limited Events ({count})**"]
+        for event in sorted(limited_events, key=lambda x: x["start"]):
+            lines.append(format_compact_event(event))
+        sections.append("\n".join(lines))
+
+    if store_recurring:
+        count = len(store_recurring)
+        lines = [f"**Store/Recurring ({count})**"]
+        for event in sorted(store_recurring, key=lambda x: x["start"]):
+            lines.append(format_compact_event(event))
+        sections.append("\n".join(lines))
+
+    description = "\n\n".join(sections)
+
+    embed = discord.Embed(
+        title="📅 Event Overview",
+        description=description,
+        color=discord.Color.from_rgb(255, 200, 220)
+    )
+    embed.set_footer(text="Infinity Nikki - Event Calendar • Use /events for detailed info")
+
+    return embed
+
+
 # ============ BUTTON VIEW ============
 class StatusPanel(ui.View):
     def __init__(self):
@@ -1237,6 +1335,39 @@ async def post_event_panel_cmd(interaction: discord.Interaction, event_type: str
     )
 
 
+@tree.command(name="postallevents", description="[MOD] Post all event panels in this channel")
+@app_commands.check(require_allowed_guild)
+@app_commands.check(require_downtime_role)
+async def post_all_events_cmd(interaction: discord.Interaction):
+    """Post panels for all event types that have active/upcoming events."""
+    if not interaction.guild_id:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    # Get all event types that have active events
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    active_types = set()
+    for event in EVENTS:
+        if event["end"] > now_ts:  # Active or upcoming
+            active_types.add(event["type"])
+
+    # Post panels in a logical order
+    order = ["resonance", "quest", "task", "checkin", "doublerewards", "web", "store", "recurring"]
+    posted_count = 0
+
+    for event_type in order:
+        if event_type in active_types:
+            await post_event_panel_message(interaction.channel, interaction.guild_id, event_type)
+            posted_count += 1
+
+    await interaction.followup.send(
+        f"{HEART_EMOJI} Posted **{posted_count}** event panels!",
+        ephemeral=True
+    )
+
+
 @tree.command(name="updateevents", description="[MOD] Manually update all event panels")
 @app_commands.check(require_allowed_guild)
 @app_commands.check(require_downtime_role)
@@ -1252,6 +1383,18 @@ async def update_events_cmd(interaction: discord.Interaction):
         f"{HEART_EMOJI} Event panels updated successfully!",
         ephemeral=True
     )
+
+
+@tree.command(name="overview", description="View compact overview of all active events")
+@app_commands.check(require_allowed_guild)
+async def view_overview(interaction: discord.Interaction):
+    """View compact overview of all events grouped by category."""
+    if not interaction.guild_id:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    embed = get_overview_embed()
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @tree.command(name="events", description="View all active and upcoming events")
