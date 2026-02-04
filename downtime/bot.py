@@ -47,6 +47,85 @@ TIME_EMOJI = "\U0001F49E"    # revolving hearts
 FOOTER_TEXT = "Infinity Nikki - Status Panel"
 BUTTON_LABEL = "Check Status"
 
+# ============ EVENT SYSTEM ============
+# Event data - update monthly with current Infinity Nikki events
+EVENTS = [
+    {
+        "type": "resonance",
+        "name": "Sweet Wishes",
+        "start": 1738368000,  # Feb 1, 2026
+        "end": 1739145540,    # Feb 10, 2026
+        "description": "Limited-time Resonance event featuring exclusive outfits",
+        "rewards": "Wishful Pact Outfit, Sweet Wishes Background",
+        "url": "https://infinity-nikki.fandom.com/wiki/Resonance"
+    },
+    {
+        "type": "quest",
+        "name": "Winter Wonderland Quest",
+        "start": 1738800000,  # Feb 6, 2026 (upcoming)
+        "end": 1739577540,    # Feb 15, 2026
+        "description": "Complete daily quests to earn winter-themed rewards",
+        "rewards": "Snowflake Accessory Set, 500 Diamonds",
+        "url": "https://infinity-nikki.fandom.com/wiki/Event"
+    },
+    {
+        "type": "task",
+        "name": "Daily Check-in Bonus",
+        "start": 1738195200,  # Jan 30, 2026
+        "end": 1738799940,    # Feb 5, 2026 (ending soon)
+        "description": "Log in daily to receive special rewards",
+        "rewards": "200 Diamonds, Experience Books",
+        "url": "https://infinity-nikki.fandom.com/wiki/Event"
+    }
+]
+
+# Event type configuration - styling for each event category
+EVENT_TYPE_CONFIG = {
+    "resonance": {
+        "emoji": "✨",
+        "color": discord.Color.from_rgb(255, 200, 220),
+        "display_name": "Resonance Event"
+    },
+    "quest": {
+        "emoji": "📜",
+        "color": discord.Color.from_rgb(200, 220, 255),
+        "display_name": "Quest Event"
+    },
+    "task": {
+        "emoji": "✅",
+        "color": discord.Color.from_rgb(220, 255, 200),
+        "display_name": "Task Event"
+    },
+    "checkin": {
+        "emoji": "📅",
+        "color": discord.Color.from_rgb(255, 220, 200),
+        "display_name": "Check-in Event"
+    },
+    "doublerewards": {
+        "emoji": "⭐",
+        "color": discord.Color.from_rgb(255, 255, 150),
+        "display_name": "Double Rewards"
+    },
+    "web": {
+        "emoji": "🌐",
+        "color": discord.Color.from_rgb(200, 255, 255),
+        "display_name": "Web Event"
+    },
+    "store": {
+        "emoji": "🛍️",
+        "color": discord.Color.from_rgb(255, 200, 255),
+        "display_name": "Store Event"
+    },
+    "recurring": {
+        "emoji": "🔄",
+        "color": discord.Color.from_rgb(220, 220, 220),
+        "display_name": "Recurring Event"
+    }
+}
+
+# Store event panel messages (separate from downtime panels)
+event_panel_messages: list[dict[str, Union[int, str]]] = []
+
 
 COMMON_TIMEZONES = [
     ("UTC", "UTC"),
@@ -269,6 +348,25 @@ def load_data() -> None:
                         panel_messages.append(
                             {"channel_id": channel_id, "message_id": message_id, "guild_id": target_id}
                         )
+
+        # Load event panels
+        event_panels = data.get("event_panels", [])
+        event_panel_messages.clear()
+        if isinstance(event_panels, list):
+            for item in event_panels:
+                if not isinstance(item, dict):
+                    continue
+                channel_id = item.get("channel_id")
+                message_id = item.get("message_id")
+                guild_id = item.get("guild_id")
+                event_type = item.get("event_type")
+                if isinstance(channel_id, int) and isinstance(message_id, int) and isinstance(guild_id, int) and isinstance(event_type, str):
+                    event_panel_messages.append({
+                        "channel_id": channel_id,
+                        "message_id": message_id,
+                        "guild_id": guild_id,
+                        "event_type": event_type
+                    })
     except Exception as exc:
         print(f"Failed to load {DATA_FILE}: {exc!r}")
 
@@ -277,6 +375,7 @@ def save_data() -> None:
     data = {
         "downtime": {str(gid): info for gid, info in current_downtime.items()},
         "panels": panel_messages,
+        "event_panels": event_panel_messages,
     }
     try:
         with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -515,6 +614,68 @@ async def update_panels(target_guild_id: Optional[int] = None) -> None:
         save_data()
 
 
+async def post_event_panel_message(channel: discord.abc.Messageable, guild_id: int, event_type: str) -> None:
+    """Post an event panel for a specific event type."""
+    embed = get_event_embed(event_type, guild_id)
+    message = await channel.send(embed=embed)
+    event_panel_messages.append({
+        "channel_id": message.channel.id,
+        "message_id": message.id,
+        "guild_id": guild_id,
+        "event_type": event_type
+    })
+    save_data()
+
+
+async def update_event_panels(target_guild_id: Optional[int] = None) -> None:
+    """Update all event panels with current event data."""
+    if not event_panel_messages:
+        return
+    stale: list[dict[str, Union[int, str]]] = []
+    for item in event_panel_messages:
+        guild_id = item.get("guild_id")
+        if target_guild_id and guild_id != target_guild_id:
+            continue
+        channel_id = item.get("channel_id")
+        message_id = item.get("message_id")
+        event_type = item.get("event_type")
+        if not channel_id or not message_id or not guild_id or not event_type:
+            stale.append(item)
+            continue
+        channel = client.get_channel(channel_id)
+        try:
+            if channel is None:
+                channel = await client.fetch_channel(channel_id)
+            if not hasattr(channel, "fetch_message"):
+                stale.append(item)
+                continue
+            message = await channel.fetch_message(message_id)
+            embed = get_event_embed(str(event_type), int(guild_id))
+            await message.edit(embed=embed)
+        except Exception:
+            stale.append(item)
+    if stale:
+        for item in stale:
+            if item in event_panel_messages:
+                event_panel_messages.remove(item)
+        save_data()
+
+
+async def event_type_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Autocomplete for event types."""
+    current_lower = (current or "").lower()
+    choices: list[app_commands.Choice[str]] = []
+    for event_type, config in EVENT_TYPE_CONFIG.items():
+        display = config["display_name"]
+        if not current_lower or current_lower in event_type.lower() or current_lower in display.lower():
+            choices.append(app_commands.Choice(name=f"{config['emoji']} {display}", value=event_type))
+        if len(choices) >= 25:
+            break
+    return choices
+
+
 def get_status_embed(guild_id: Optional[int], full: bool = False) -> discord.Embed:
     """Build status embed. full=True for detailed view, False for panel."""
 
@@ -601,6 +762,147 @@ def parse_duration_minutes(raw: str) -> Optional[int]:
     return total
 
 
+# ============ EVENT FUNCTIONS ============
+def get_events_by_type(event_type: str) -> list[dict]:
+    """Filter events by type and return only active/upcoming events."""
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    filtered = [
+        event for event in EVENTS
+        if event["type"] == event_type and event["end"] > now_ts
+    ]
+    return sorted(filtered, key=lambda x: x["start"])
+
+
+def get_event_status(start_ts: int, end_ts: int, now_ts: int) -> str:
+    """Determine event status indicator based on timestamps."""
+    if now_ts < start_ts:
+        time_until = start_ts - now_ts
+        if time_until <= 86400:  # 24 hours
+            return "🟡 Starting Soon"
+        return "🔵 Upcoming"
+    elif now_ts < end_ts:
+        time_remaining = end_ts - now_ts
+        if time_remaining <= 172800:  # 48 hours
+            return "🟠 Ending Soon"
+        return "🟢 Active"
+    else:
+        return "⚫ Ended"
+
+
+def format_event_entry(event: dict, now_ts: int) -> str:
+    """Format a single event entry for embed description."""
+    status = get_event_status(event["start"], event["end"], now_ts)
+    name = event["name"]
+    end_ts = event["end"]
+    start_ts = event["start"]
+    rewards = event.get("rewards", "N/A")
+    url = event.get("url", "")
+
+    # Build the entry
+    lines = [f"**{status}: {name}**"]
+
+    # Show appropriate timestamp based on status
+    if now_ts < start_ts:
+        # Upcoming - show when it starts
+        lines.append(f"Starts: <t:{start_ts}:R> • <t:{start_ts}:F>")
+        lines.append(f"Ends: <t:{end_ts}:F>")
+    else:
+        # Active - show when it ends
+        lines.append(f"Ends: <t:{end_ts}:R> • <t:{end_ts}:F>")
+
+    lines.append(f"**Rewards:** {rewards}")
+
+    if url:
+        lines.append(f"🔗 [Wiki Guide]({url})")
+
+    return "\n".join(lines)
+
+
+def get_event_embed(event_type: str, guild_id: Optional[int] = None) -> discord.Embed:
+    """Build embed for a specific event type showing all active/upcoming events."""
+    config = EVENT_TYPE_CONFIG.get(event_type)
+    if not config:
+        # Fallback if unknown type
+        config = {"emoji": "📌", "color": discord.Color.blurple(), "display_name": "Event"}
+
+    events = get_events_by_type(event_type)
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+
+    # Build title
+    emoji = config["emoji"]
+    display_name = config["display_name"]
+    title = f"{emoji} {display_name}s"
+
+    # Build description
+    if not events:
+        description = f"No active or upcoming {display_name.lower()}s at this time.\n\nCheck back later for new events!"
+    else:
+        entries = [format_event_entry(event, now_ts) for event in events]
+        description = "\n\n──────────────────────\n\n".join(entries)
+
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=config["color"]
+    )
+    embed.set_footer(text="Infinity Nikki - Event Calendar")
+
+    return embed
+
+
+def get_all_events_embed(event_type_filter: Optional[str] = None) -> discord.Embed:
+    """Build embed showing all active/upcoming events, optionally filtered by type."""
+    if event_type_filter:
+        return get_event_embed(event_type_filter)
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    all_events = [e for e in EVENTS if e["end"] > now_ts]
+
+    if not all_events:
+        embed = discord.Embed(
+            title="📅 All Events",
+            description="No active or upcoming events at this time.\n\nCheck back later!",
+            color=discord.Color.blurple()
+        )
+        embed.set_footer(text="Infinity Nikki - Event Calendar")
+        return embed
+
+    # Group by type
+    by_type: dict[str, list[dict]] = {}
+    for event in all_events:
+        event_type = event["type"]
+        if event_type not in by_type:
+            by_type[event_type] = []
+        by_type[event_type].append(event)
+
+    # Build description with sections per type
+    sections = []
+    for event_type, events in sorted(by_type.items()):
+        config = EVENT_TYPE_CONFIG.get(event_type, {"emoji": "📌", "display_name": "Event"})
+        emoji = config["emoji"]
+        display_name = config["display_name"]
+
+        section_lines = [f"**{emoji} {display_name}s**"]
+        for event in sorted(events, key=lambda x: x["start"]):
+            status = get_event_status(event["start"], event["end"], now_ts)
+            name = event["name"]
+            end_ts = event["end"]
+            section_lines.append(f"{status}: {name} • Ends <t:{end_ts}:R>")
+
+        sections.append("\n".join(section_lines))
+
+    description = "\n\n".join(sections)
+
+    embed = discord.Embed(
+        title="📅 All Events",
+        description=description,
+        color=discord.Color.from_rgb(255, 200, 220)
+    )
+    embed.set_footer(text="Infinity Nikki - Event Calendar • Use /eventpanel to post detailed panels")
+
+    return embed
+
+
 # ============ BUTTON VIEW ============
 class StatusPanel(ui.View):
     def __init__(self):
@@ -663,6 +965,7 @@ async def on_ready():
         synced = await tree.sync()
         print(f"Synced {len(synced)} global commands")
     await update_panels()
+    await update_event_panels()
     print(f"Bot is online as {client.user}")
 
 
@@ -844,6 +1147,76 @@ async def status(interaction: discord.Interaction):
         await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
         return
     embed = get_status_embed(interaction.guild_id, full=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@tree.command(name="eventpanel", description="[MOD] Post an event panel in this channel")
+@app_commands.describe(event_type="Event type to display (e.g., resonance, quest, task)")
+@app_commands.autocomplete(event_type=event_type_autocomplete)
+@app_commands.check(require_allowed_guild)
+@app_commands.check(require_downtime_role)
+async def post_event_panel_cmd(interaction: discord.Interaction, event_type: str):
+    """Post an event panel for a specific event type."""
+    if not interaction.guild_id:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    # Validate event type
+    if event_type not in EVENT_TYPE_CONFIG:
+        valid_types = ", ".join(EVENT_TYPE_CONFIG.keys())
+        await interaction.response.send_message(
+            f"{HEART_EMOJI} **Invalid event type**\n\n"
+            f"Valid types: {valid_types}",
+            ephemeral=True
+        )
+        return
+
+    await post_event_panel_message(interaction.channel, interaction.guild_id, event_type)
+    config = EVENT_TYPE_CONFIG[event_type]
+    await interaction.response.send_message(
+        f"{config['emoji']} Event panel posted for **{config['display_name']}s**!",
+        ephemeral=True
+    )
+
+
+@tree.command(name="updateevents", description="[MOD] Manually update all event panels")
+@app_commands.check(require_allowed_guild)
+@app_commands.check(require_downtime_role)
+async def update_events_cmd(interaction: discord.Interaction):
+    """Manually trigger event panel updates."""
+    if not interaction.guild_id:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    await update_event_panels(interaction.guild_id)
+    await interaction.followup.send(
+        f"{HEART_EMOJI} Event panels updated successfully!",
+        ephemeral=True
+    )
+
+
+@tree.command(name="events", description="View all active and upcoming events")
+@app_commands.describe(event_type="Optional: Filter by event type")
+@app_commands.autocomplete(event_type=event_type_autocomplete)
+@app_commands.check(require_allowed_guild)
+async def view_events(interaction: discord.Interaction, event_type: Optional[str] = None):
+    """View all events or filter by type."""
+    if not interaction.guild_id:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    # Validate event type if provided
+    if event_type and event_type not in EVENT_TYPE_CONFIG:
+        valid_types = ", ".join(EVENT_TYPE_CONFIG.keys())
+        await interaction.response.send_message(
+            f"{HEART_EMOJI} **Invalid event type**\n\n"
+            f"Valid types: {valid_types}",
+            ephemeral=True
+        )
+        return
+
+    embed = get_all_events_embed(event_type)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
