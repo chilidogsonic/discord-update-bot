@@ -6,7 +6,11 @@
       "Bash(git commit:*)",
       "Bash(dir:*)",
       "Bash(git check-ignore:*)",
-      "WebFetch(domain:infinity-nikki.fandom.com)"
+      "WebFetch(domain:infinity-nikki.fandom.com)",
+      "WebFetch(domain:help.pebblehost.com)",
+      "Bash(git push)",
+      "Bash(git rm:*)",
+      "Bash(git reset:*)"
     ]
   }
 }
