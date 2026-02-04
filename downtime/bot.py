@@ -54,8 +54,8 @@ EVENTS = [
     {
         "type": "resonance",
         "name": "Echoes of Wanxiang",
-        "start": 1738180800,  # Jan 29, 2026 20:00 UTC
-        "end": 1741116540,    # Mar 2, 2026 19:49 UTC
+        "start": 1769716800,  # Jan 29, 2026 20:00 UTC
+        "end": 1772480940,    # Mar 2, 2026 19:49 UTC
         "description": "5★ outfit Where Wanxiang Weaves Life, 4★ Song Beyond",
         "rewards": "5★ Miracle Outfit, 4★ Outfit, Decorations, Heartshine Items",
         "url": "https://infinity-nikki.fandom.com/wiki/Version/2.2"
@@ -63,8 +63,8 @@ EVENTS = [
     {
         "type": "resonance",
         "name": "Traces of Chroma",
-        "start": 1738180800,  # Jan 29, 2026 20:00 UTC
-        "end": 1741116540,    # Mar 2, 2026 19:49 UTC
+        "start": 1769716800,  # Jan 29, 2026 20:00 UTC
+        "end": 1772480940,    # Mar 2, 2026 19:49 UTC
         "description": "5★ outfit Chroma's Mortal Heart, 4★ Moonlit Immortal",
         "rewards": "5★ Miracle Outfit, 4★ Outfit, Dance Moves, Items",
         "url": "https://infinity-nikki.fandom.com/wiki/Version/2.2"
@@ -73,8 +73,8 @@ EVENTS = [
     {
         "type": "task",
         "name": "Flavors of Life",
-        "start": 1738180800,  # Jan 29, 2026 20:00 UTC
-        "end": 1741116540,    # Mar 2, 2026 19:49 UTC
+        "start": 1769716800,  # Jan 29, 2026 20:00 UTC
+        "end": 1772480940,    # Mar 2, 2026 19:49 UTC
         "description": "Complete tasks to earn 4★ outfit Tasting the World",
         "rewards": "4★ Outfit, Outfit Sketch, Diamonds",
         "url": "https://infinity-nikki.fandom.com/wiki/Version/2.2"
@@ -82,8 +82,8 @@ EVENTS = [
     {
         "type": "quest",
         "name": "Transient Wonders",
-        "start": 1738180800,  # Jan 29, 2026 20:00 UTC
-        "end": 1741116540,    # Mar 2, 2026 19:49 UTC
+        "start": 1769716800,  # Jan 29, 2026 20:00 UTC
+        "end": 1772480940,    # Mar 2, 2026 19:49 UTC
         "description": "Collection event with special rewards",
         "rewards": "Diamonds, Card: Endless Revelry, Materials",
         "url": "https://infinity-nikki.fandom.com/wiki/Version/2.2"
@@ -91,8 +91,8 @@ EVENTS = [
     {
         "type": "checkin",
         "name": "Chroma's Blessings",
-        "start": 1738180800,  # Jan 29, 2026 20:00 UTC
-        "end": 1739496340,    # Feb 14, 2026 01:59 UTC
+        "start": 1769716800,  # Jan 29, 2026 20:00 UTC
+        "end": 1771034340,    # Feb 14, 2026 01:59 UTC
         "description": "7-day login event for Revelation Crystals",
         "rewards": "10 Revelation Crystals",
         "url": "https://infinity-nikki.fandom.com/wiki/Version/2.2"
@@ -100,8 +100,8 @@ EVENTS = [
     {
         "type": "doublerewards",
         "name": "Deep Breakthrough",
-        "start": 1738468800,  # Feb 2, 2026 04:00 UTC
-        "end": 1740283140,    # Feb 23, 2026 03:59 UTC
+        "start": 1770004800,  # Feb 2, 2026 04:00 UTC
+        "end": 1771819140,    # Feb 23, 2026 03:59 UTC
         "description": "Weekly doubled realm challenge rewards",
         "rewards": "Double Realm Challenge Rewards (once per week per realm)",
         "url": "https://infinity-nikki.fandom.com/wiki/Version/2.2"
@@ -110,8 +110,8 @@ EVENTS = [
     {
         "type": "store",
         "name": "Mira Journey (Battle Pass)",
-        "start": 1738180800,  # Jan 29, 2026 20:00 UTC
-        "end": 1741116540,    # Mar 2, 2026 19:49 UTC
+        "start": 1769716800,  # Jan 29, 2026 20:00 UTC
+        "end": 1772480940,    # Mar 2, 2026 19:49 UTC
         "description": "Complete Journey Tasks for rewards, max level 90",
         "rewards": "Resonite Crystals, Energy Crystals, Premium Items",
         "url": "https://infinity-nikki.fandom.com/wiki/Mira_Journey"
@@ -120,8 +120,8 @@ EVENTS = [
     {
         "type": "recurring",
         "name": "Daily Reset",
-        "start": 1738108800,  # Jan 29, 2026 00:00 UTC (start of v2.2)
-        "end": 1767225600,    # Dec 31, 2026 00:00 UTC (far future)
+        "start": 1769644800,  # Jan 29, 2026 00:00 UTC (start of v2.2)
+        "end": 1798761600,    # Dec 31, 2026 00:00 UTC (far future)
         "description": "Daily reset at 04:00 server time (11:00 UTC for America)",
         "rewards": "Daily Quests, Shop Refresh, Energy Refresh",
         "url": "https://infinity-nikki.fandom.com/wiki/Reset"
@@ -129,8 +129,8 @@ EVENTS = [
     {
         "type": "recurring",
         "name": "Weekly Reset",
-        "start": 1738108800,  # Jan 29, 2026 00:00 UTC
-        "end": 1767225600,    # Dec 31, 2026 00:00 UTC
+        "start": 1769644800,  # Jan 29, 2026 00:00 UTC
+        "end": 1798761600,    # Dec 31, 2026 00:00 UTC
         "description": "Weekly reset every Monday at 04:00 server time",
         "rewards": "Weekly Quests, Weekly Shop Refresh, Realm Challenges",
         "url": "https://infinity-nikki.fandom.com/wiki/Reset"
