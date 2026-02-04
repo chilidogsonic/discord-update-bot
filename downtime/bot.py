@@ -50,32 +50,90 @@ BUTTON_LABEL = "Check Status"
 # ============ EVENT SYSTEM ============
 # Event data - update monthly with current Infinity Nikki events
 EVENTS = [
+    # Version 2.2 Resonance Events
     {
         "type": "resonance",
-        "name": "Sweet Wishes",
-        "start": 1738368000,  # Feb 1, 2026
-        "end": 1739145540,    # Feb 10, 2026
-        "description": "Limited-time Resonance event featuring exclusive outfits",
-        "rewards": "Wishful Pact Outfit, Sweet Wishes Background",
-        "url": "https://infinity-nikki.fandom.com/wiki/Resonance"
+        "name": "Echoes of Wanxiang",
+        "start": 1738180800,  # Jan 29, 2026 20:00 UTC
+        "end": 1741116540,    # Mar 2, 2026 19:49 UTC
+        "description": "5★ outfit Where Wanxiang Weaves Life, 4★ Song Beyond",
+        "rewards": "5★ Miracle Outfit, 4★ Outfit, Decorations, Heartshine Items",
+        "url": "https://infinity-nikki.fandom.com/wiki/Version/2.2"
+    },
+    {
+        "type": "resonance",
+        "name": "Traces of Chroma",
+        "start": 1738180800,  # Jan 29, 2026 20:00 UTC
+        "end": 1741116540,    # Mar 2, 2026 19:49 UTC
+        "description": "5★ outfit Chroma's Mortal Heart, 4★ Moonlit Immortal",
+        "rewards": "5★ Miracle Outfit, 4★ Outfit, Dance Moves, Items",
+        "url": "https://infinity-nikki.fandom.com/wiki/Version/2.2"
+    },
+    # Version 2.2 Collection & Task Events
+    {
+        "type": "task",
+        "name": "Flavors of Life",
+        "start": 1738180800,  # Jan 29, 2026 20:00 UTC
+        "end": 1741116540,    # Mar 2, 2026 19:49 UTC
+        "description": "Complete tasks to earn 4★ outfit Tasting the World",
+        "rewards": "4★ Outfit, Outfit Sketch, Diamonds",
+        "url": "https://infinity-nikki.fandom.com/wiki/Version/2.2"
     },
     {
         "type": "quest",
-        "name": "Winter Wonderland Quest",
-        "start": 1738800000,  # Feb 6, 2026 (upcoming)
-        "end": 1739577540,    # Feb 15, 2026
-        "description": "Complete daily quests to earn winter-themed rewards",
-        "rewards": "Snowflake Accessory Set, 500 Diamonds",
-        "url": "https://infinity-nikki.fandom.com/wiki/Event"
+        "name": "Transient Wonders",
+        "start": 1738180800,  # Jan 29, 2026 20:00 UTC
+        "end": 1741116540,    # Mar 2, 2026 19:49 UTC
+        "description": "Collection event with special rewards",
+        "rewards": "Diamonds, Card: Endless Revelry, Materials",
+        "url": "https://infinity-nikki.fandom.com/wiki/Version/2.2"
     },
     {
-        "type": "task",
-        "name": "Daily Check-in Bonus",
-        "start": 1738195200,  # Jan 30, 2026
-        "end": 1738799940,    # Feb 5, 2026 (ending soon)
-        "description": "Log in daily to receive special rewards",
-        "rewards": "200 Diamonds, Experience Books",
-        "url": "https://infinity-nikki.fandom.com/wiki/Event"
+        "type": "checkin",
+        "name": "Chroma's Blessings",
+        "start": 1738180800,  # Jan 29, 2026 20:00 UTC
+        "end": 1739496340,    # Feb 14, 2026 01:59 UTC
+        "description": "7-day login event for Revelation Crystals",
+        "rewards": "10 Revelation Crystals",
+        "url": "https://infinity-nikki.fandom.com/wiki/Version/2.2"
+    },
+    {
+        "type": "doublerewards",
+        "name": "Deep Breakthrough",
+        "start": 1738468800,  # Feb 2, 2026 04:00 UTC
+        "end": 1740283140,    # Feb 23, 2026 03:59 UTC
+        "description": "Weekly doubled realm challenge rewards",
+        "rewards": "Double Realm Challenge Rewards (once per week per realm)",
+        "url": "https://infinity-nikki.fandom.com/wiki/Version/2.2"
+    },
+    # Battle Pass
+    {
+        "type": "store",
+        "name": "Mira Journey (Battle Pass)",
+        "start": 1738180800,  # Jan 29, 2026 20:00 UTC
+        "end": 1741116540,    # Mar 2, 2026 19:49 UTC
+        "description": "Complete Journey Tasks for rewards, max level 90",
+        "rewards": "Resonite Crystals, Energy Crystals, Premium Items",
+        "url": "https://infinity-nikki.fandom.com/wiki/Mira_Journey"
+    },
+    # Daily & Weekly Resets
+    {
+        "type": "recurring",
+        "name": "Daily Reset",
+        "start": 1738108800,  # Jan 29, 2026 00:00 UTC (start of v2.2)
+        "end": 1767225600,    # Dec 31, 2026 00:00 UTC (far future)
+        "description": "Daily reset at 04:00 server time (11:00 UTC for America)",
+        "rewards": "Daily Quests, Shop Refresh, Energy Refresh",
+        "url": "https://infinity-nikki.fandom.com/wiki/Reset"
+    },
+    {
+        "type": "recurring",
+        "name": "Weekly Reset",
+        "start": 1738108800,  # Jan 29, 2026 00:00 UTC
+        "end": 1767225600,    # Dec 31, 2026 00:00 UTC
+        "description": "Weekly reset every Monday at 04:00 server time",
+        "rewards": "Weekly Quests, Weekly Shop Refresh, Realm Challenges",
+        "url": "https://infinity-nikki.fandom.com/wiki/Reset"
     }
 ]
 
